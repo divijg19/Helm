@@ -189,59 +189,93 @@ func TestCheckOutdated_PseudoVersion(t *testing.T) {
 	}
 }
 
-func TestCheckOutdated_RetractedRange_Within(t *testing.T) {
-	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.1.5","Retracted":["[v1.1.0, v1.2.0]"]}`}
-	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
-	}
-	results := CheckOutdated(context.Background(), tools, runner)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Error == nil {
-		t.Errorf("expected error for retracted latest version in range, got nil")
-	} else if !strings.Contains(results[0].Error.Error(), "retracted") {
-		t.Errorf("unexpected error message: %v", results[0].Error)
-	}
-}
-
-func TestCheckOutdated_RetractedRange_Outside(t *testing.T) {
-	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.2.1","Retracted":["[v1.1.0, v1.2.0]"]}`}
-	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
-	}
-	results := CheckOutdated(context.Background(), tools, runner)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Error != nil {
-		t.Errorf("unexpected error for version outside retracted range: %v", results[0].Error)
-	}
-	if !results[0].Outdated {
-		t.Errorf("expected version v1.2.1 to be outdated compared to v1.0.0, got outdated=false")
-	}
-}
-
-func TestCheckOutdated_RetractedRange_Invalid(t *testing.T) {
+// TestCheckOutdated_RetractedRange establishes the complete inclusive-range
+// contract for Helm's retracted-version handling, exercised through the
+// observable CheckOutdated behavior (not the private isRetracted helper).
+//
+// Given a retraction of the form [low, high], the implementation treats a
+// latest version as retracted when:
+//
+//	low <= version <= high   (inclusive on both boundaries)
+//
+// Any value outside that window falls through to normal outdated evaluation.
+// Malformed or semantically invalid range metadata must be ignored rather than
+// incorrectly converting an otherwise valid outdated check into a retraction
+// failure.
+func TestCheckOutdated_RetractedRange(t *testing.T) {
+	const rangeSpec = "[v1.1.0, v1.2.0]"
 	tests := []struct {
-		name       string
-		retraction string
+		name          string
+		latest        string
+		retraction    string
+		wantRetracted bool
+		wantOutdated  bool
 	}{
-		{"invalid low", "[invalid, v1.2.0]"},
-		{"invalid high", "[v1.1.0, invalid]"},
-		{"malformed range", "[v1.1.0]"},
-		{"no brackets", "v1.1.0, v1.2.0"},
+		{
+			name:          "interior",
+			latest:        "v1.1.5",
+			retraction:    rangeSpec,
+			wantRetracted: true,
+		},
+		{
+			name:          "lower boundary inclusive",
+			latest:        "v1.1.0",
+			retraction:    rangeSpec,
+			wantRetracted: true,
+		},
+		{
+			name:          "upper boundary inclusive",
+			latest:        "v1.2.0",
+			retraction:    rangeSpec,
+			wantRetracted: true,
+		},
+		{
+			name:          "above range",
+			latest:        "v1.2.1",
+			retraction:    rangeSpec,
+			wantRetracted: false,
+			wantOutdated:  true,
+		},
+		{
+			name:          "below range",
+			latest:        "v1.0.9",
+			retraction:    rangeSpec,
+			wantRetracted: false,
+			wantOutdated:  true,
+		},
+		{
+			name:          "invalid low boundary",
+			latest:        "v1.1.5",
+			retraction:    "[invalid, v1.2.0]",
+			wantRetracted: false,
+			wantOutdated:  true,
+		},
+		{
+			name:          "invalid high boundary",
+			latest:        "v1.1.5",
+			retraction:    "[v1.1.0, invalid]",
+			wantRetracted: false,
+			wantOutdated:  true,
+		},
+		{
+			name:          "malformed range single boundary",
+			latest:        "v1.1.5",
+			retraction:    "[v1.1.0]",
+			wantRetracted: false,
+			wantOutdated:  true,
+		},
+		{
+			name:          "missing brackets",
+			latest:        "v1.1.5",
+			retraction:    "v1.1.0, v1.2.0",
+			wantRetracted: false,
+			wantOutdated:  true,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.1.5","Retracted":["` + tc.retraction + `"]}`}
+			runner := mockRunner{output: `{"Path":"example.com/foo","Version":"` + tc.latest + `","Retracted":["` + tc.retraction + `"]}`}
 			tools := []Tool{
 				{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
 					Path: "example.com/foo/cmd/foo",
@@ -252,10 +286,20 @@ func TestCheckOutdated_RetractedRange_Invalid(t *testing.T) {
 			if len(results) != 1 {
 				t.Fatalf("expected 1 result, got %d", len(results))
 			}
-			// None of the invalid retraction syntaxes should successfully classify v1.1.5 as retracted,
-			// so the version check itself should succeed and be outdated (no error).
-			if results[0].Error != nil {
-				t.Errorf("unexpected error for invalid retraction %q: %v", tc.retraction, results[0].Error)
+			r := results[0]
+			if tc.wantRetracted {
+				if r.Error == nil {
+					t.Errorf("expected retraction error for latest %s in range %s, got nil", tc.latest, tc.retraction)
+				} else if !strings.Contains(r.Error.Error(), "retracted") {
+					t.Errorf("unexpected error message: %v", r.Error)
+				}
+				return
+			}
+			if r.Error != nil {
+				t.Errorf("unexpected error for latest %s with retraction %s: %v", tc.latest, tc.retraction, r.Error)
+			}
+			if r.Outdated != tc.wantOutdated {
+				t.Errorf("expected outdated=%v for latest %s (installed v1.0.0), got %v", tc.wantOutdated, tc.latest, r.Outdated)
 			}
 		})
 	}
