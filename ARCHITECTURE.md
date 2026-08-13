@@ -7,8 +7,10 @@ and documentation evolve together.
 ## Package Layout
 
 ```
-cmd/helm/            CLI entrypoint: flag parsing, renderer selection, exit codes.
-cmd/update-go-tools/ Alias entrypoint: delegates to cmd/helm.
+cmd/helm/            Single canonical executable entrypoint. Resolves its
+                      invocation name (helm, Helm, update-go-tools) at the CLI
+                      boundary via internal/cli and delegates to the shared
+                      application implementation.
 internal/app/          Orchestration (Run* methods) and output rendering.
 internal/tool/         Domain: discovery, metadata parsing, update, outdated, verify.
 internal/testutil/     Hermetic fixture builder for tests.

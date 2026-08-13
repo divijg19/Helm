@@ -23,6 +23,39 @@ const (
 	ExitEnv     = 3
 )
 
+// Invocation identifies how the canonical Helm executable was invoked.
+//
+// Executable identity is resolved at the CLI boundary from the process
+// basename and must not leak into the application or domain layers.
+type Invocation struct {
+	// Name is the normalized invocation name, e.g. "helm" or "update-go-tools".
+	Name string
+	// Canonical reports whether the invocation name is a first-class canonical
+	// name (helm, Helm) rather than a preserved compatibility alias
+	// (update-go-tools). All supported invocations currently share the same
+	// behavior; the distinction is retained for future alias-specific policy.
+	Canonical bool
+}
+
+// ResolveInvocation maps an executable basename to its invocation identity.
+//
+// Supported names:
+//   helm, Helm         -> canonical Helm behavior
+//   update-go-tools    -> preserved compatibility behavior
+// Any other name defaults to canonical Helm behavior. Case is matched only for
+// the explicitly supported canonical spellings; arbitrary variants such as
+// "HELM" are not normalized.
+func ResolveInvocation(rawName string) Invocation {
+	switch rawName {
+	case "helm", "Helm":
+		return Invocation{Name: rawName, Canonical: true}
+	case "update-go-tools":
+		return Invocation{Name: rawName, Canonical: false}
+	default:
+		return Invocation{Name: rawName, Canonical: true}
+	}
+}
+
 type cliOptions struct {
 	jsonOutput bool
 	quiet      bool
@@ -32,7 +65,7 @@ type cliOptions struct {
 	positional []string
 }
 
-func Run(args []string) int {
+func Run(inv Invocation, args []string) int {
 	ctx := context.Background()
 	opts, code := parseFlags(args)
 	if code != 0 {

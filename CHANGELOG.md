@@ -4,6 +4,17 @@ All notable changes to Helm are documented here.
 
 ## [Unreleased]
 
+## [v1.6.5]
+
+### Changed
+
+* Consolidated the executable entrypoints into a single canonical `cmd/helm`
+  implementation. `helm`, `Helm`, and the compatibility alias `update-go-tools`
+  are now first-class invocation names resolved from the process basename at the
+  CLI boundary (`internal/cli.ResolveInvocation`), not separate `main` packages.
+* Removed the duplicate `cmd/update-go-tools` entrypoint. Aliases are exposed by
+  installing the one binary under the appropriate name.
+
 ## [v1.6.0]
 
 ### Changed

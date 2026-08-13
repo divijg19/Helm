@@ -28,6 +28,3 @@ jobs:
 
       - name: Build helm
         run: go build ./cmd/helm
-
-      - name: Build update-go-tools
-        run: go build ./cmd/update-go-tools

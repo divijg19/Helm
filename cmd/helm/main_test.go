@@ -14,9 +14,11 @@ import (
 )
 
 var (
-	binaryPath string
-	testDir    string
-	updateFlag = flag.Bool("update", false, "update golden files")
+	binaryPath       string
+	compatBinaryPath string
+	upperBinaryPath  string
+	testDir          string
+	updateFlag       = flag.Bool("update", false, "update golden files")
 )
 
 func TestMain(m *testing.M) {
@@ -36,6 +38,18 @@ func TestMain(m *testing.M) {
 		panic("go build failed: " + err.Error())
 	}
 
+	// The canonical binary is the single implementation. Aliases are exercised
+	// by copying that one executable to alias names so invocation-name
+	// resolution (basename extraction) is what differs, not the binary.
+	compatBinaryPath = filepath.Join(tmp, "update-go-tools")
+	if err := copyFile(binaryPath, compatBinaryPath); err != nil {
+		panic("copy failed: " + err.Error())
+	}
+	upperBinaryPath = filepath.Join(tmp, "Helm")
+	if err := copyFile(binaryPath, upperBinaryPath); err != nil {
+		panic("copy failed: " + err.Error())
+	}
+
 	os.Exit(m.Run())
 }
 
@@ -44,10 +58,13 @@ type cliResult struct {
 	stderr string
 	code   int
 }
-
 func runCLI(t *testing.T, fixtureEnv []string, args ...string) cliResult {
+	return runBinary(t, binaryPath, fixtureEnv, args...)
+}
+
+func runBinary(t *testing.T, binPath string, fixtureEnv []string, args ...string) cliResult {
 	t.Helper()
-	cmd := exec.Command(binaryPath, args...)
+	cmd := exec.Command(binPath, args...)
 	cmd.Env = append(os.Environ(), fixtureEnv...)
 
 	var stdout, stderr bytes.Buffer
@@ -68,6 +85,14 @@ func runCLI(t *testing.T, fixtureEnv []string, args ...string) cliResult {
 		stderr: stderr.String(),
 		code:   code,
 	}
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o755)
 }
 
 var (
@@ -370,5 +395,29 @@ func TestInfoMissing(t *testing.T) {
 	result := runCLI(t, f.Env(), "--info", "nonexistent")
 	if result.code != 2 {
 		t.Errorf("exit code: expected 2, got %d", result.code)
+	}
+}
+
+func TestAliasUpdateGoToolsMatchesHelm(t *testing.T) {
+	f := testutil.NewFixture(t)
+	helm := runCLI(t, f.Env(), "--version")
+	compat := runBinary(t, compatBinaryPath, f.Env(), "--version")
+	if helm.code != compat.code {
+		t.Errorf("exit code mismatch: helm=%d update-go-tools=%d", helm.code, compat.code)
+	}
+	if helm.stdout != compat.stdout {
+		t.Errorf("update-go-tools alias must produce identical --version output to helm:\nhelm:\n%s\nupdate-go-tools:\n%s", helm.stdout, compat.stdout)
+	}
+}
+
+func TestAliasUpperCaseHelmMatchesHelm(t *testing.T) {
+	f := testutil.NewFixture(t)
+	helm := runCLI(t, f.Env(), "--version")
+	upper := runBinary(t, upperBinaryPath, f.Env(), "--version")
+	if helm.code != upper.code {
+		t.Errorf("exit code mismatch: helm=%d Helm=%d", helm.code, upper.code)
+	}
+	if helm.stdout != upper.stdout {
+		t.Errorf("Helm alias must produce identical --version output to helm:\nhelm:\n%s\nHelm:\n%s", helm.stdout, upper.stdout)
 	}
 }
