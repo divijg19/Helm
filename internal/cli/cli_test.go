@@ -3,6 +3,9 @@ package cli
 import (
 	"errors"
 	"testing"
+
+	"helm/internal/app"
+	"helm/internal/tool"
 )
 
 func TestResolveInvocation(t *testing.T) {
@@ -32,21 +35,35 @@ func TestResolveInvocation(t *testing.T) {
 	}
 }
 
-// TestEnvironmentFailurePropagatesToExitFailure proves the current propagation
-// contract for an environment-resolution failure (e.g. GetGobin error): it
-// reaches the generic CLI failure path and exits with ExitFailure (1).
+// TestRunPropagatesNewAppErrorToExitFailure proves the second link of the
+// environment-failure propagation chain through the REAL cli.Run path:
 //
-// This is a deliberate, behavior-preserving assertion. The dedicated ExitEnv
-// constant exists but is intentionally NOT used for this path yet; activating
-// it is deferred semantic work and must not be smuggled into this coverage
-// commit. The test therefore locks the established exit code rather than a new
-// one.
-func TestEnvironmentFailurePropagatesToExitFailure(t *testing.T) {
-	code := fail("Error:", errors.New("GOPATH is not set and GOBIN is empty"))
+//	NewApp() failure
+//	    ↓
+//	cli.Run failure path (fail)
+//	    ↓
+//	ExitFailure (1)
+//
+// It does not call fail() directly; it drives the actual Run entry point with a
+// resolver that makes NewApp fail exactly as a GOBIN/GOPATH resolution failure
+// would, then asserts the resulting exit code. Combined with the app-package
+// test (GetGobin error -> NewApp error), the full chain
+// GetGobin -> NewApp -> cli.Run -> ExitFailure is established with real code.
+//
+// ExitEnv remains intentionally unused: activating it is deferred semantic
+// work and must not be smuggled into this coverage commit.
+func TestRunPropagatesNewAppErrorToExitFailure(t *testing.T) {
+	prev := newApp
+	newApp = func(renderer app.Renderer, runner tool.Runner) (*app.App, error) {
+		return nil, errors.New("GOPATH is not set and GOBIN is empty")
+	}
+	defer func() { newApp = prev }()
+
+	code := Run(ResolveInvocation("helm"), []string{"--help"})
 	if code != ExitFailure {
-		t.Errorf("environment-resolution failure exited with %d, want ExitFailure (%d)", code, ExitFailure)
+		t.Errorf("NewApp error exited with %d, want ExitFailure (%d)", code, ExitFailure)
 	}
 	if code == ExitEnv {
-		t.Errorf("environment-resolution failure must NOT use ExitEnv (%d) in v1.6.6; that is deferred", ExitEnv)
+		t.Errorf("environment-resolution failure must NOT use ExitEnv (%d) in v1.6.7; that is deferred", ExitEnv)
 	}
 }

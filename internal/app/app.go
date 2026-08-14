@@ -15,8 +15,14 @@ type App struct {
 	loadResValid bool
 }
 
+// gobinResolver resolves the GOBIN directory. It is a package-private seam so
+// tests can deterministically exercise GOBIN/GOPATH resolution failure
+// propagation through the real NewApp path without invoking the toolchain.
+// Production behavior is unchanged: it defaults to tool.GetGobin.
+var gobinResolver = tool.GetGobin
+
 func NewApp(renderer Renderer, runner tool.Runner) (*App, error) {
-	gobin, err := tool.GetGobin()
+	gobin, err := gobinResolver()
 	if err != nil {
 		return nil, err
 	}

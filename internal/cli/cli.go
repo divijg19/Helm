@@ -40,8 +40,10 @@ type Invocation struct {
 // ResolveInvocation maps an executable basename to its invocation identity.
 //
 // Supported names:
-//   helm, Helm         -> canonical Helm behavior
-//   update-go-tools    -> preserved compatibility behavior
+//
+//	helm, Helm         -> canonical Helm behavior
+//	update-go-tools    -> preserved compatibility behavior
+//
 // Any other name defaults to canonical Helm behavior. Case is matched only for
 // the explicitly supported canonical spellings; arbitrary variants such as
 // "HELM" are not normalized.
@@ -65,6 +67,12 @@ type cliOptions struct {
 	positional []string
 }
 
+// newApp constructs the application. It is a package-private seam so tests can
+// deterministically exercise environment-resolution failure propagation through
+// the real cli.Run failure path without changing production behavior. It
+// defaults to app.NewApp.
+var newApp = app.NewApp
+
 func Run(inv Invocation, args []string) int {
 	ctx := context.Background()
 	opts, code := parseFlags(args)
@@ -83,7 +91,7 @@ func Run(inv Invocation, args []string) int {
 	}
 
 	renderer := app.NewRenderer(mode, opts.verbose)
-	application, err := app.NewApp(renderer, tool.DefaultRunner{})
+	application, err := newApp(renderer, tool.DefaultRunner{})
 	if err != nil {
 		return fail("Error:", err)
 	}

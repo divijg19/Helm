@@ -4,6 +4,29 @@ All notable changes to Helm are documented here.
 
 ## [Unreleased]
 
+## [v1.6.7]
+
+### Changed
+
+* Corrected the over-stated environment-failure claim from v1.6.6. v1.6.6 only
+  proved `fail()` returns `ExitFailure`; it did not exercise the real
+  `GetGobin() -> NewApp() -> cli.Run()` propagation path.
+* Added real propagation coverage for the GOBIN/GOPATH resolution failure
+  contract with two minimal, package-private test seams (`app.gobinResolver`,
+  `cli.newApp`), each exercising genuine production code:
+  * `GetGobin()` failure -> `NewApp()` failure (internal/app test, real NewApp).
+  * `NewApp()` failure -> `cli.Run()` failure path -> `ExitFailure` (internal/cli
+    test, real `Run`).
+  Together these establish the full chain
+  `GetGobin -> NewApp -> cli.Run -> ExitFailure (1)` without changing any
+  runtime behavior.
+
+### Deferred
+
+* `ExitEnv = 3` remains defined but unused. Whether environment/configuration
+  resolution failures should map to `ExitEnv` is an open semantic question and
+  is intentionally not activated in this commit (or v1.6.6).
+
 ## [v1.6.6]
 
 ### Changed

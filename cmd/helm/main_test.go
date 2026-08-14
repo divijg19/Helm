@@ -58,6 +58,7 @@ type cliResult struct {
 	stderr string
 	code   int
 }
+
 func runCLI(t *testing.T, fixtureEnv []string, args ...string) cliResult {
 	return runBinary(t, binaryPath, fixtureEnv, args...)
 }
