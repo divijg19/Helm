@@ -2,6 +2,7 @@ package tool
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -26,25 +27,16 @@ func getGobin(env goEnvFunc) (string, error) {
 		if gobin != "" {
 			return gobin, nil
 		}
-		out, err = env("env", "GOPATH")
-		if err != nil {
-			return "", ErrGobinResolution
-		}
-		gopath := strings.TrimSpace(out)
-		if gopath == "" {
-			return "", ErrGobinResolution
-		}
-		return filepath.Join(gopath, "bin"), nil
 	}
 
-	// GOBIN query fails; fall through to GOPATH
+	// GOBIN is either empty or failed to query; fall through to GOPATH
 	out, err = env("env", "GOPATH")
 	if err != nil {
-		return "", ErrGobinResolution
+		return "", fmt.Errorf("failed to determine GOPATH: %w", ErrGobinResolution)
 	}
 	gopath := strings.TrimSpace(out)
 	if gopath == "" {
-		return "", ErrGobinResolution
+		return "", fmt.Errorf("GOPATH is not set and GOBIN is empty: %w", ErrGobinResolution)
 	}
 	return filepath.Join(gopath, "bin"), nil
 }
