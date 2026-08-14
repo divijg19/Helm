@@ -1,11 +1,13 @@
 package tool
 
 import (
-	"fmt"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+var ErrGobinResolution = errors.New("gobin resolution failed")
 
 // goEnvFunc runs a `go env` query and returns its raw stdout plus any error.
 // It exists as an injectable seam so the resolution logic can be exercised
@@ -24,15 +26,25 @@ func getGobin(env goEnvFunc) (string, error) {
 		if gobin != "" {
 			return gobin, nil
 		}
+		out, err = env("env", "GOPATH")
+		if err != nil {
+			return "", ErrGobinResolution
+		}
+		gopath := strings.TrimSpace(out)
+		if gopath == "" {
+			return "", ErrGobinResolution
+		}
+		return filepath.Join(gopath, "bin"), nil
 	}
 
+	// GOBIN query fails; fall through to GOPATH
 	out, err = env("env", "GOPATH")
 	if err != nil {
-		return "", fmt.Errorf("failed to determine GOPATH: %w", err)
+		return "", ErrGobinResolution
 	}
 	gopath := strings.TrimSpace(out)
 	if gopath == "" {
-		return "", fmt.Errorf("GOPATH is not set and GOBIN is empty")
+		return "", ErrGobinResolution
 	}
 	return filepath.Join(gopath, "bin"), nil
 }
@@ -41,11 +53,6 @@ func getGobin(env goEnvFunc) (string, error) {
 // the GOBIN environment variable and falls back to $GOPATH/bin. Its externally
 // observable behavior is unchanged by the internal test seam: callers continue
 // to use the real Go toolchain via defaultGoEnv.
-//
-// NOTE: when resolution fails, the error propagates to a generic CLI failure
-// (exit code ExitFailure, see internal/cli). The dedicated ExitEnv constant is
-// intentionally NOT used here yet; activating it is deferred semantic work
-// (see changelog / future audit), not part of this coverage commit.
 func GetGobin() (string, error) {
 	return getGobin(defaultGoEnv)
 }

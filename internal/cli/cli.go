@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -93,6 +94,9 @@ func Run(inv Invocation, args []string) int {
 	renderer := app.NewRenderer(mode, opts.verbose)
 	application, err := newApp(renderer, tool.DefaultRunner{})
 	if err != nil {
+		if errors.Is(err, tool.ErrGobinResolution) {
+			return ExitEnv
+		}
 		return fail("Error:", err)
 	}
 
