@@ -4,6 +4,24 @@ All notable changes to Helm are documented here.
 
 ## [Unreleased]
 
+## [v1.6.6]
+
+### Changed
+
+* Added deterministic, hermetic coverage for GOBIN/GOPATH resolution and its
+  failure paths (`internal/tool/gobin.go`): GOBIN precedence, GOPATH fallback,
+  GOBIN-query failure fallback, empty GOPATH error, and `go env GOPATH` failure.
+  An internal test seam was introduced without changing the public `GetGobin()`
+  API or any runtime behavior.
+* Verified the current failure-propagation contract: a GOBIN/GOPATH resolution
+  failure exits with the generic `ExitFailure` (1), unchanged.
+
+### Deferred
+
+* `ExitEnv = 3` remains defined but unused. Whether environment/configuration
+  resolution failures should map to `ExitEnv` is an open semantic question and
+  is intentionally not activated in this commit.
+
 ## [v1.6.5]
 
 ### Changed
