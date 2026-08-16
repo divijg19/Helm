@@ -4,28 +4,55 @@ All notable changes to Helm are documented here.
 
 ## [Unreleased]
 
+## [v1.6.10]
+
+### Changed
+
+* Reconciled the supported invocation contract to `helm`, `Helm`, and
+  `update-go-tools` through the single canonical `cmd/helm` entrypoint.
+* Completed the v1.6 baseline documentation audit and consolidated engineering
+  investigations outside the product documentation surface.
+* Added coverage for environment-resolution errors mapping to `ExitEnv` (3)
+  while generic application failures remain `ExitFailure` (1).
+
+### Deferred
+
+* Performance optimization, concurrency, and persistent caching remain v1.7+
+  work.
+
+## [v1.6.9]
+
+### Changed
+
+* Finalized the v1.6 performance measurement baseline and verification
+  workflow.
+
+### Deferred
+
+* Concurrency and caching work remained deferred to v1.7.0.
+
+## [v1.6.8]
+
+### Changed
+
+* Prepared Helm for v1.7 performance work with benchmark and profiling
+  infrastructure.
+
+### Deferred
+
+* Performance implementation remained deferred to v1.7.0.
+
 ## [v1.6.7]
 
 ### Changed
 
-* Corrected the over-stated environment-failure claim from v1.6.6. v1.6.6 only
-  proved `fail()` returns `ExitFailure`; it did not exercise the real
-  `GetGobin() -> NewApp() -> cli.Run()` propagation path.
-* Added real propagation coverage for the GOBIN/GOPATH resolution failure
-  contract with two minimal, package-private test seams (`app.gobinResolver`,
-  `cli.newApp`), each exercising genuine production code:
-  * `GetGobin()` failure -> `NewApp()` failure (internal/app test, real NewApp).
-  * `NewApp()` failure -> `cli.Run()` failure path -> `ExitFailure` (internal/cli
-    test, real `Run`).
-  Together these establish the full chain
-  `GetGobin -> NewApp -> cli.Run -> ExitFailure (1)` without changing any
-  runtime behavior.
+* Added real propagation coverage for GOBIN/GOPATH resolution failures through
+  `GetGobin`, `NewApp`, and `cli.Run`.
 
 ### Deferred
 
-* `ExitEnv = 3` remains defined but unused. Whether environment/configuration
-  resolution failures should map to `ExitEnv` is an open semantic question and
-  is intentionally not activated in this commit (or v1.6.6).
+* Environment-resolution failures still used the generic failure exit code at
+  this release point; the `ExitEnv` contract was finalized in v1.6.10.
 
 ## [v1.6.6]
 
