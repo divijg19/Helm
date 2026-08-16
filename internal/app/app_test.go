@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"helm/internal/tool"
@@ -20,12 +21,15 @@ import (
 func TestNewAppPropagatesGobinResolutionError(t *testing.T) {
 	prev := gobinResolver
 	gobinResolver = func() (string, error) {
-		return "", errors.New("GOPATH is not set and GOBIN is empty")
+		return "", fmt.Errorf("GOPATH is not set and GOBIN is empty: %w", tool.ErrGobinResolution)
 	}
 	defer func() { gobinResolver = prev }()
 
 	result, err := NewApp(NewRenderer(ModeTerminal, false), tool.DefaultRunner{})
 	if err == nil {
 		t.Fatalf("expected NewApp to fail when GOBIN resolution fails, got nil (app=%v)", result)
+	}
+	if !errors.Is(err, tool.ErrGobinResolution) {
+		t.Fatalf("expected ErrGobinResolution, got %v", err)
 	}
 }

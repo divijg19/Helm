@@ -6,24 +6,10 @@
 go build -o helm ./cmd/helm
 ```
 
-The version string is injected at build time:
+The version string and build metadata can be injected at build time:
 
 ```bash
-go build -ldflags "-X helm/internal/cli.version=v1.6.0" ./cmd/helm
-```
-
-Build metadata (commit hash and build date) can also be injected:
-
-```bash
-go build -ldflags "-X helm/internal/cli.version=v1.6.0 -X helm/internal/cli.commitHash=abc1234 -X helm/internal/cli.buildDate=2026-08-05" ./cmd/helm
-```
-
-`--version` then prints:
-
-```
-Helm v1.6.0
-Commit    abc1234
-Built     2026-08-05
+go build -ldflags "-X helm/internal/cli.version=v1.6.10 -X helm/internal/cli.commitHash=abc1234 -X helm/internal/cli.buildDate=2026-08-16" ./cmd/helm
 ```
 
 ## Testing
@@ -32,6 +18,8 @@ The test suite includes unit tests, integration tests against a temporary GOBIN 
 
 ```bash
 go test ./...
+go test -count=1 ./...
+go test -race ./...
 ```
 
 Regenerate golden files after an intentional output change:

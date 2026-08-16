@@ -1,9 +1,18 @@
 # Helm
 > alias: update-go-tools
 
-A lightweight utility to discover, inspect, and maintain Go developer binaries installed via `go install`. Reads embedded module metadata through `debug/buildinfo`.
+A lightweight utility to discover, inspect, and maintain Go developer tools installed with `go install`.
+It reads embedded module metadata through debug/buildinfo and can list, inspect, plan, check, or update the tools in your Go binary directory.
 
+## Install
+
+```bash
+go build -o helm ./cmd/helm
 ```
+
+## Usage
+
+```text
 helm [tool...]          # update specific tools (or all if omitted)
 helm --list             # inventory with health status
 helm --check            # plan updates without executing
@@ -15,45 +24,36 @@ helm --quiet            # suppress headers; emit only data
 helm --help / --version
 ```
 
-There are no subcommands — all interactions are flag-driven operating modes on a single responsibility.
+Use `--json` for machine-readable output, `--ci` for deterministic text, and
+`--quiet`/`-q` to suppress headers. `--dry-run` aliases `--check`.
 
-## Quick start
-
-```bash
-go build -o helm ./cmd/helm
-./helm --list
-```
-
-## Flags
-
-| Flag | Description |
-|---|---|
-| `--help`, `-h` | Display help documentation |
-| `--version`, `-v` | Display version information |
-| `--list` | Canonical inventory: tool, version, health status, and package for every Go-managed binary |
-| `--check` / `--dry-run` | Summarize pending updates without executing |
-| `--outdated` | Check upstream releases for installed tools and report which are out of date |
-| `--info <tool>` | Show detailed metadata for a specific tool |
-| `--json` | Output renderer: emit machine-readable JSON for any operation |
-| `--quiet`, `-q` | Suppress the discovery header; emit only data (for scripting) |
-| `--ci` | Deterministic, ASCII-only output (no ANSI, no Unicode, no progress) |
-| `--verbose`, `-V` | Detailed planning view: packages and install commands |
-
-`--json`, `--quiet`/`-q`, `--ci`, and `--verbose`/`-V` are output modifiers, not operations. They can be combined with any operation.
-
-## Key features
-
-- **Single responsibility**: one job: keep `go install` tools up to date.
-- **Multiple output modes**: terminal, JSON, quiet, and CI (deterministic, ASCII-only).
-- **Stable contract**: flags, exit codes, and JSON schema are guaranteed stable within the 1.x series.
-- **Hermetic testing**: tests never touch your real GOBIN, module cache, or network.
+There are no subcommands; all interactions are flag-driven operating modes.
 
 ## Documentation
 
-| Doc | Covers |
-|---|---|
-| [Architecture](ARCHITECTURE.md) | Design rationale, layers, renderers, determinism |
-| [Development](DEVELOPMENT.md) | Building, testing, versioning, and exit codes |
-| [Changelog](CHANGELOG.md) | Version history |
+See [Architecture](ARCHITECTURE.md), [Development](DEVELOPMENT.md), and
+[Changelog](CHANGELOG.md) for project documentation.
 
-Project structure: `cmd/` for entrypoints, `internal/app/` for orchestration, `internal/tool/` for domain logic, `internal/cli/` for the CLI package, and `testdata/` for hermetic fixtures.
+## License
+
+MIT License
+
+Copyright (c) 2026 Divij Ganjoo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
