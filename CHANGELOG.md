@@ -4,6 +4,26 @@ All notable changes to Helm are documented here.
 
 ## [Unreleased]
 
+## [v1.7.0]
+
+### Changed
+
+* Added bounded concurrency to `CheckOutdated` so independent `go list -m -json
+  <module>@latest` checks execute in parallel with a small internal worker bound
+  (default 4). This materially reduces wall-clock latency when checking many
+  installed tools.
+* The normal Helm execution path now uses the bounded concurrent implementation;
+  concurrency is an internal optimization, not a user-facing option.
+* Preserved the existing `CheckOutdated` contract: deterministic result ordering
+  by discovered tool position, per-tool error attachment, and context
+  cancellation propagation. No CLI flags, no persistent caching, and no Update
+  concurrency were introduced.
+
+### Deferred
+
+* Update concurrency, persistent result caching, and Load/Verify
+  parallelization remain separate investigations for later v1.7.x work.
+
 ## [v1.6.10]
 
 ### Changed

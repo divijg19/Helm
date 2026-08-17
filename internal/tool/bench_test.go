@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"debug/buildinfo"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
@@ -80,6 +81,26 @@ func BenchmarkCheckOutdated(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if got := CheckOutdated(ctx, tools, runner); len(got) != 2 {
 			b.Fatalf("expected 2 results, got %d", len(got))
+		}
+	}
+}
+
+// BenchmarkCheckOutdatedConcurrent exercises the bounded worker path with a
+// larger tool set using the deterministic mock runner. It guards against
+// regression in the concurrent dispatch (goroutine/channel overhead) without
+// depending on the real network or module proxy.
+func BenchmarkCheckOutdatedConcurrent(b *testing.B) {
+	ctx := context.Background()
+	const n = 16
+	tools := make([]Tool, n)
+	for i := 0; i < n; i++ {
+		tools[i] = makeBenchTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("example.com/tool%d", i), "v1.0.0")
+	}
+	runner := mockRunner{output: `{"Path":"example.com/tool1","Version":"v1.1.0"}`}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if got := checkOutdatedConcurrency(ctx, tools, runner, defaultOutdatedConcurrency); len(got) != n {
+			b.Fatalf("expected %d results, got %d", n, len(got))
 		}
 	}
 }

@@ -23,7 +23,6 @@ helm --ci               # deterministic, script-friendly output
 helm --quiet            # suppress headers; emit only data
 helm --help / --version
 ```
-```
 
 Use `--json` for machine-readable output, `--ci` for deterministic text, and
 `--quiet`/`-q` to suppress headers. `--dry-run` aliases `--check`.
