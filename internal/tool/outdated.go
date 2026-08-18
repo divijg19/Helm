@@ -103,6 +103,21 @@ func checkOutdatedConcurrency(ctx context.Context, tools []Tool, runner Runner, 
 		return results
 	}
 
+	// If the context is already cancelled, do not launch workers. Each updatable
+	// tool receives the cancellation error, preserving the per-tool contract and
+	// avoiding unnecessary goroutine/process spawning.
+	if ctx.Err() != nil {
+		for i, toolIdx := range work {
+			t := tools[toolIdx]
+			results[i] = OutdatedResult{
+				Tool:    t,
+				Current: t.Version(),
+				Error:   ctx.Err(),
+			}
+		}
+		return results
+	}
+
 	n := len(work)
 	if concurrency > n {
 		concurrency = n

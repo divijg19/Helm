@@ -4,6 +4,16 @@ All notable changes to Helm are documented here.
 
 ## [Unreleased]
 
+## [v1.7.1]
+
+### Engineering
+
+* Hardened bounded concurrent outdated checks with deterministic ordering,
+  cancellation, failure-isolation, and concurrency-bound coverage. Added an
+  early context-cancellation guard so a pre-cancelled invocation launches no
+  worker goroutines or subprocesses. The worker bound of 4 is unchanged and
+  remains empirically justified by real measurements.
+
 ## [v1.7.0]
 
 ### Changed
