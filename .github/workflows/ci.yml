@@ -1,18 +1,19 @@
 name: CI
 
 on:
-  push:
-    branches: [ "*" ]
   pull_request:
-    branches: [ "*" ]
+  push:
+    branches: [main, update]
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    name: Build and Test
+  verify:
+    name: Verify
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v6
 
       - name: Set up Go
@@ -20,11 +21,40 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Run tests
-        run: go test ./...
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
 
-      - name: Run vet
+      - name: Vet
         run: go vet ./...
 
-      - name: Build helm
-        run: go build ./cmd/helm
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Test with race detector
+        run: go test -race -count=1 ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          flags: "-checks=all,-ST1000,-ST1003,-ST1016,-ST1020,-ST1021,-ST1022,-ST1023"

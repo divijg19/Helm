@@ -1,4 +1,4 @@
-Helm v1.6.10-test - Inspect, inventory, and update Go-managed tools
+Helm v1.7.2-test - Inspect, inventory, and update Go-managed tools
 
 Usage:
     helm [tool...]
