@@ -75,17 +75,3 @@ func (t Tool) CanUpdate() bool {
 func (t Tool) IsValid() bool {
 	return t.info != nil && t.PackagePath() != ""
 }
-
-func (t Tool) SkipReason() string {
-	if t.info == nil {
-		return "missing build info"
-	}
-	if t.PackagePath() == "" || t.PackagePath() == "(devel)" {
-		return "local development binary"
-	}
-	ver := t.Version()
-	if ver == "" || ver == "unknown" || ver == "(devel)" {
-		return "local development binary"
-	}
-	return "unsupported"
-}

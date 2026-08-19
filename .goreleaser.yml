@@ -1,0 +1,48 @@
+version: 2
+
+project_name: helm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: helm
+    main: ./cmd/helm
+    binary: helm
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X helm/internal/cli.version={{.Tag}}
+      - -X helm/internal/cli.commitHash={{.Commit}}
+      - -X helm/internal/cli.buildDate={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: helm
+    name_template: "helm_{{.Tag}}_{{.Os}}_{{.Arch}}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  draft: false
+  prerelease: auto
