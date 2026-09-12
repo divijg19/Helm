@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
@@ -33,6 +34,26 @@ func (r TerminalRenderer) Header(hdr HeaderInfo) error {
 	fmt.Printf("  %-11s : %d\n", "Local", hdr.LoadRes.Summary.Local)
 	fmt.Printf("  %-11s : %d\n", "Invalid", hdr.LoadRes.Summary.Invalid)
 	fmt.Println()
+	if hdr.LoadRes.Summary.Updatable > 0 {
+		fmt.Println("Updatable tools:")
+		// Compute max name width, minimum 16 to match established alignment.
+		maxNameLen := 0
+		for _, t := range hdr.LoadRes.Tools {
+			if t.CanUpdate() && len(t.Name()) > maxNameLen {
+				maxNameLen = len(t.Name())
+			}
+		}
+		width := maxNameLen
+		if width < 16 {
+			width = 16
+		}
+		for _, t := range hdr.LoadRes.Tools {
+			if t.CanUpdate() {
+				fmt.Printf("  %s %-*s %s\n", symBullet, width, t.Name(), t.Version())
+			}
+		}
+		fmt.Println()
+	}
 	if hdr.LoadRes.Summary.Local > 0 {
 		fmt.Println("Skipping local development binaries:")
 		for _, t := range hdr.LoadRes.Tools {
@@ -61,6 +82,7 @@ func (r TerminalRenderer) Inventory(report InventoryReport) error {
 	maxNameLen := 4
 	maxVerLen := 7
 	maxStatusLen := 7
+	maxPkgLen := 7
 	for _, t := range report.Tools {
 		if len(t.Name) > maxNameLen {
 			maxNameLen = len(t.Name)
@@ -71,16 +93,23 @@ func (r TerminalRenderer) Inventory(report InventoryReport) error {
 		if len(t.Status) > maxStatusLen {
 			maxStatusLen = len(t.Status)
 		}
+		if len(t.PackagePath) > maxPkgLen {
+			maxPkgLen = len(t.PackagePath)
+		}
 	}
 
-	format := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds   %%s\n", maxNameLen, maxVerLen, maxStatusLen)
-	fmt.Printf(format, "NAME", "VERSION", "STATUS", "PACKAGE")
+	format := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds   %%-%ds   %%s\n", maxNameLen, maxVerLen, maxStatusLen, maxPkgLen)
+	fmt.Printf(format, "NAME", "VERSION", "STATUS", "PACKAGE", "MODULE")
 
 	for _, t := range report.Tools {
 		if t.Name == "" {
 			continue
 		}
-		fmt.Printf(format, t.Name, t.Version, t.Status, t.PackagePath)
+		modPath := t.ModulePath
+		if modPath == "" {
+			modPath = "-"
+		}
+		fmt.Printf(format, t.Name, t.Version, t.Status, t.PackagePath, modPath)
 		if t.Error != "" {
 			fmt.Fprintf(os.Stderr, "  ↳ %s\n", t.Error)
 		}
@@ -180,7 +209,11 @@ func (r TerminalRenderer) Outdated(report OutdatedReport) error {
 func (r TerminalRenderer) OnProgress(p tool.Progress) {
 	switch p.Action {
 	case "Start":
-		fmt.Printf("[%02d/%02d] %-18s", p.Current, p.Total, p.Tool.Name())
+		if p.Version != "" {
+			fmt.Printf("[%02d/%02d] %-18s %s → %s", p.Current, p.Total, p.Tool.Name(), p.Tool.Version(), p.Version)
+		} else {
+			fmt.Printf("[%02d/%02d] %-18s", p.Current, p.Total, p.Tool.Name())
+		}
 	case "Output":
 		fmt.Printf("  %s\n", p.Line)
 	case "Complete":
@@ -213,6 +246,45 @@ func (r TerminalRenderer) Update(report UpdateReport) error {
 		fmt.Println()
 		for _, name := range report.Skipped {
 			fmt.Printf("  %s %s\n", symBullet, name)
+		}
+		fmt.Println()
+	}
+
+	// Installation detail: show resolved version per tool, grouped by module.
+	if len(report.UpdatedDetail) > 0 {
+		fmt.Println("Installations")
+		fmt.Println()
+		// Group by module path for readability.
+		moduleMap := make(map[string][]UpdatedToolDetail)
+		for _, d := range report.UpdatedDetail {
+			key := d.ModulePath
+			if key == "" {
+				key = "-"
+			}
+			moduleMap[key] = append(moduleMap[key], d)
+		}
+		// Sort modules deterministically.
+		var modules []string
+		for m := range moduleMap {
+			modules = append(modules, m)
+		}
+		sort.Strings(modules)
+		for _, m := range modules {
+			details := moduleMap[m]
+			// Use the first detail's resolved version as the module header.
+			first := details[0]
+			modHeader := first.ModulePath
+			if modHeader == "" {
+				modHeader = "-"
+			}
+			fmt.Printf("  %s@%s\n", modHeader, first.Resolved)
+			for _, d := range details {
+				prev := d.Previous
+				if prev == "" {
+					prev = "(current)"
+				}
+				fmt.Printf("    %s (%s → %s) %s\n", d.Name, prev, d.Resolved, d.PackagePath)
+			}
 		}
 		fmt.Println()
 	}

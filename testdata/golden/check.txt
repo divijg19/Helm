@@ -8,6 +8,10 @@ Discovery
   Local       : 1
   Invalid     : 1
 
+Updatable tools:
+  • hello            v1.0.0
+  • world            v1.2.0
+
 Skipping local development binaries:
   • localdev
 

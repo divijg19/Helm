@@ -8,13 +8,17 @@ Discovery
   Local       : 1
   Invalid     : 1
 
+Updatable tools:
+  • hello            v1.0.0
+  • world            v1.2.0
+
 Skipping local development binaries:
   • localdev
 
-NAME       VERSION   STATUS    PACKAGE
-hello      v1.0.0    Healthy   example.com/hello
-localdev   (devel)   Local     example.com/localdev
-world      v1.2.0    Healthy   example.com/world
+NAME       VERSION   STATUS    PACKAGE                MODULE
+hello      v1.0.0    Healthy   example.com/hello      example.com/hello
+localdev   (devel)   Local     example.com/localdev   example.com/localdev
+world      v1.2.0    Healthy   example.com/world      example.com/world
 
 Invalid / Uninspectable binaries
 
