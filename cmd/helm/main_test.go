@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"debug/buildinfo"
 	"flag"
 	"os"
 	"os/exec"
@@ -31,7 +32,7 @@ func TestMain(m *testing.M) {
 	testDir = tmp
 
 	binaryPath = filepath.Join(tmp, "helm")
-	build := exec.Command("go", "build", "-ldflags=-X=helm/internal/cli.version=v1.7.2-test -X=helm/internal/cli.commitHash=abc1234 -X=helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
+	build := exec.Command("go", "build", "-ldflags=-X=helm/internal/cli.version=v1.8.0-test -X=helm/internal/cli.commitHash=abc1234 -X=helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
@@ -226,6 +227,33 @@ func TestDefaultUpdate(t *testing.T) {
 	}
 }
 
+// TestDefaultUpdateInstallsOnlyOutdated is the end-to-end proof of the
+// outdated-first contract: after a default update, the outdated fixture tool
+// (world v1.2.0 -> v1.3.0) is installed at the resolved version while the
+// already-current tool (hello v1.0.0) keeps its exact binary version.
+func TestDefaultUpdateInstallsOnlyOutdated(t *testing.T) {
+	f := testutil.NewFixture(t)
+	result := runCLI(t, f.Env())
+	if result.code != 0 {
+		t.Fatalf("exit code: expected 0, got %d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+	if got := installedVersion(t, f.Gobin("world")); got != "v1.3.0" {
+		t.Errorf("world version = %q, want v1.3.0 (resolved latest must be installed)", got)
+	}
+	if got := installedVersion(t, f.Gobin("hello")); got != "v1.0.0" {
+		t.Errorf("hello version = %q, want v1.0.0 (already-current tool must not be reinstalled)", got)
+	}
+}
+
+func installedVersion(t *testing.T, binPath string) string {
+	t.Helper()
+	bi, err := buildinfo.ReadFile(binPath)
+	if err != nil {
+		t.Fatalf("cannot read buildinfo for %s: %v", binPath, err)
+	}
+	return bi.Main.Version
+}
+
 func TestPlanCheck(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--check")
@@ -280,11 +308,15 @@ func TestQuietUpdate(t *testing.T) {
 }
 
 func TestQuietLongFlag(t *testing.T) {
-	f := testutil.NewFixture(t)
-	short := runCLI(t, f.Env(), "-q")
-	long := runCLI(t, f.Env(), "--quiet")
-	gotShort := normalizeOutput(t, f.GobinDir, short.stdout)
-	gotLong := normalizeOutput(t, f.GobinDir, long.stdout)
+	// Each invocation gets an identical starting fixture: update mutates the
+	// GOBIN, so sharing one fixture would make the second run observe the
+	// first run's completed update rather than testing flag equivalence.
+	fShort := testutil.NewFixture(t)
+	fLong := testutil.NewFixture(t)
+	short := runCLI(t, fShort.Env(), "-q")
+	long := runCLI(t, fLong.Env(), "--quiet")
+	gotShort := normalizeOutput(t, fShort.GobinDir, short.stdout)
+	gotLong := normalizeOutput(t, fLong.GobinDir, long.stdout)
 	if gotShort != gotLong {
 		t.Errorf("--quiet must match -q output:\n-q:\n%s\n--quiet:\n%s", gotShort, gotLong)
 	}

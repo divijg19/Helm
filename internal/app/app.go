@@ -233,27 +233,23 @@ func (a *App) RunUpdate(ctx context.Context, args []string) error {
 		onProgress = termRend.OnProgress
 	}
 
-	var updatableTools []tool.Tool
-	for _, t := range loadRes.Tools {
-		if t.CanUpdate() {
-			updatableTools = append(updatableTools, t)
-		}
-	}
+	// Outdated-first update: resolve the selected updatable tools, then install
+	// only the candidates a successful outdated check authorized. Resolution
+	// failures veto installation; they are reported as failures (preserving
+	// the existing non-zero exit behavior) rather than silent skips.
+	set := tool.ResolveUpdateCandidates(ctx, loadRes.Tools, args, a.Runner)
 
-	results, duration, diagnostics := tool.Update(ctx, updatableTools, args, false, a.Runner, onProgress)
-	report := a.updateReport(results, loadRes, duration, diagnostics)
+	results, duration, diagnostics := tool.UpdateCandidates(ctx, set.Candidates, a.Runner, onProgress)
+	report := a.updateReport(results, loadRes, set, duration, diagnostics)
 	return a.Renderer.Update(report)
 }
 
-func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadResult, duration time.Duration, diagnostics []tool.Diagnostic) UpdateReport {
+func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadResult, set tool.CandidateSet, duration time.Duration, diagnostics []tool.Diagnostic) UpdateReport {
 	updated := make([]string, 0)
 	notes := make([]string, 0)
 	failed := make([]string, 0)
 
 	for _, res := range results {
-		if res.Status == tool.StatusSkippedLocal {
-			continue
-		}
 		if res.Success {
 			updated = append(updated, res.Tool.Name())
 			if len(res.Notes) > 0 {
@@ -262,6 +258,20 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 		} else {
 			failed = append(failed, res.Tool.Name())
 		}
+	}
+
+	upToDate := make([]string, 0, len(set.UpToDate))
+	for _, t := range set.UpToDate {
+		upToDate = append(upToDate, t.Name())
+	}
+
+	for _, r := range set.Failed {
+		failed = append(failed, r.Tool.Name())
+		diagnostics = append(diagnostics, tool.Diagnostic{
+			ToolName: r.Tool.Name(),
+			Category: "Outdated",
+			Message:  r.Error.Error(),
+		})
 	}
 
 	skipped := make([]string, 0, len(loadRes.Invalid))
@@ -275,6 +285,7 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 			Success:   len(failed) == 0,
 		},
 		Updated:     updated,
+		UpToDate:    upToDate,
 		Notes:       notes,
 		Skipped:     skipped,
 		Failed:      failed,

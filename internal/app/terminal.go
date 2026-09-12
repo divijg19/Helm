@@ -230,6 +230,7 @@ func (r TerminalRenderer) Update(report UpdateReport) error {
 
 	printSummaryBlock([][2]string{
 		{"Updated", itoa(len(report.Updated))},
+		{"Up-to-date", itoa(len(report.UpToDate))},
 		{"Skipped", itoa(len(report.Skipped))},
 		{"Failed", itoa(len(report.Failed))},
 		{"Duration", formatDuration(report.Duration)},

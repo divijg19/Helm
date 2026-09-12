@@ -142,6 +142,7 @@ type OutdatedSummary struct {
 type UpdateReport struct {
 	OperationEnvelope
 	Updated     []string          `json:"updated"`
+	UpToDate    []string          `json:"up_to_date"`
 	Notes       []string          `json:"notes,omitempty"`
 	Skipped     []string          `json:"skipped"`
 	Failed      []string          `json:"failed"`
