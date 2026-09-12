@@ -32,7 +32,7 @@ func TestMain(m *testing.M) {
 	testDir = tmp
 
 	binaryPath = filepath.Join(tmp, "helm")
-	build := exec.Command("go", "build", "-ldflags=-X=helm/internal/cli.version=v1.8.0-test -X=helm/internal/cli.commitHash=abc1234 -X=helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
+	build := exec.Command("go", "build", "-ldflags=-X=helm/internal/cli.version=v1.9.0-test -X=helm/internal/cli.commitHash=abc1234 -X=helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {

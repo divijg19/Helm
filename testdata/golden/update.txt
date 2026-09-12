@@ -8,14 +8,23 @@ Discovery
   Local       : 1
   Invalid     : 1
 
+Updatable tools:
+  • hello            v1.0.0
+  • world            v1.2.0
+
 Skipping local development binaries:
   • localdev
 
-[01/01] world                        ✓
+[01/01] world              v1.2.0 → v1.3.0           ✓
 
 Skipped
 
   • <TMP>/gobin/notgo
+
+Installations
+
+  example.com/world@v1.3.0
+    world (v1.2.0 → v1.3.0) example.com/world
 
 Summary
 

@@ -248,6 +248,7 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 	updated := make([]string, 0)
 	notes := make([]string, 0)
 	failed := make([]string, 0)
+	updatedDetail := make([]UpdatedToolDetail, 0)
 
 	for _, res := range results {
 		if res.Success {
@@ -274,6 +275,33 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 		})
 	}
 
+	// Build installation detail per resolved candidate. Each entry records the
+	// tool's previous installed version, the resolved version, and its paths.
+	for _, c := range set.Candidates {
+		resultsFor := func() []tool.ToolUpdateResult {
+			for _, r := range results {
+				if r.Tool.Name() == c.Tool.Name() {
+					return []tool.ToolUpdateResult{r}
+				}
+			}
+			return []tool.ToolUpdateResult{}
+		}()
+		prevVersion := ""
+		if len(resultsFor) > 0 && resultsFor[0].Success {
+			// Pre-resolution version cannot be inferred from result alone; we use
+			// the tool's Version() field which reflects the installed binary version.
+			prevVersion = resultsFor[0].Tool.Version()
+		}
+		detail := UpdatedToolDetail{
+			Name:        c.Tool.Name(),
+			PackagePath: c.Tool.PackagePath(),
+			ModulePath:  c.Tool.ModulePath(),
+			Previous:    prevVersion,
+			Resolved:    c.Version,
+		}
+		updatedDetail = append(updatedDetail, detail)
+	}
+
 	skipped := make([]string, 0, len(loadRes.Invalid))
 	for _, inv := range loadRes.Invalid {
 		skipped = append(skipped, inv.Path)
@@ -284,12 +312,13 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 			Operation: OperationUpdate,
 			Success:   len(failed) == 0,
 		},
-		Updated:     updated,
-		UpToDate:    upToDate,
-		Notes:       notes,
-		Skipped:     skipped,
-		Failed:      failed,
-		Duration:    duration,
-		Diagnostics: diagnostics,
+		Updated:       updated,
+		UpToDate:      upToDate,
+		UpdatedDetail: updatedDetail,
+		Notes:         notes,
+		Skipped:       skipped,
+		Failed:        failed,
+		Duration:      duration,
+		Diagnostics:   diagnostics,
 	}
 }

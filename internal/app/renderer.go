@@ -139,15 +139,24 @@ type OutdatedSummary struct {
 	UpToDate int `json:"up_to_date"`
 }
 
+type UpdatedToolDetail struct {
+	Name        string
+	PackagePath string
+	ModulePath  string
+	Previous    string
+	Resolved    string
+}
+
 type UpdateReport struct {
 	OperationEnvelope
-	Updated     []string          `json:"updated"`
-	UpToDate    []string          `json:"up_to_date"`
-	Notes       []string          `json:"notes,omitempty"`
-	Skipped     []string          `json:"skipped"`
-	Failed      []string          `json:"failed"`
-	Duration    time.Duration     `json:"-"`
-	Diagnostics []tool.Diagnostic `json:"-"`
+	Updated       []string            `json:"updated"`
+	UpToDate      []string            `json:"up_to_date"`
+	UpdatedDetail []UpdatedToolDetail `json:"-"`
+	Notes         []string            `json:"notes,omitempty"`
+	Skipped       []string            `json:"skipped"`
+	Failed        []string            `json:"failed"`
+	Duration      time.Duration       `json:"-"`
+	Diagnostics   []tool.Diagnostic   `json:"-"`
 }
 
 // PlanReport is the single unified planning operation report produced by

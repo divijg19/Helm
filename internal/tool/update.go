@@ -24,6 +24,7 @@ type Progress struct {
 	Current int
 	Total   int
 	Tool    Tool
+	Version string // resolved version being installed (e.g. "v1.3.0"), empty for legacy path
 	Action  string // "Start", "Output", "Complete", "Skipped"
 	Line    string
 	Status  Status
@@ -96,7 +97,7 @@ func Update(ctx context.Context, tools []Tool, filter []string, dryRun bool, run
 			continue
 		}
 
-		res, diags := installTool(ctx, t, InstallRef(t.InstallTarget()), current, total, runner, onProgress)
+		res, diags := installTool(ctx, t, "", InstallRef(t.InstallTarget()), current, total, runner, onProgress)
 		results = append(results, res)
 		diagnostics = append(diagnostics, diags...)
 	}
@@ -120,7 +121,7 @@ func UpdateCandidates(ctx context.Context, candidates []UpdateCandidate, runner 
 
 	total := len(candidates)
 	for i, c := range candidates {
-		res, diags := installTool(ctx, c.Tool, InstallExactRef(c.Tool.InstallTarget(), c.Version), i+1, total, runner, onProgress)
+		res, diags := installTool(ctx, c.Tool, c.Version, InstallExactRef(c.Tool.InstallTarget(), c.Version), i+1, total, runner, onProgress)
 		results = append(results, res)
 		diagnostics = append(diagnostics, diags...)
 	}
@@ -132,7 +133,7 @@ func UpdateCandidates(ctx context.Context, candidates []UpdateCandidate, runner 
 // the outcome through the shared progress/diagnostics contract. Both the
 // legacy floating-@latest path and the exact-version candidate path use it,
 // so progress, notes, and failure semantics are identical.
-func installTool(ctx context.Context, t Tool, ref string, current, total int, runner Runner, onProgress func(Progress)) (ToolUpdateResult, []Diagnostic) {
+func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, current, total int, runner Runner, onProgress func(Progress)) (ToolUpdateResult, []Diagnostic) {
 	var diagnostics []Diagnostic
 
 	if onProgress != nil {
@@ -140,6 +141,7 @@ func installTool(ctx context.Context, t Tool, ref string, current, total int, ru
 			Current: current,
 			Total:   total,
 			Tool:    t,
+			Version: resolvedVersion,
 			Action:  "Start",
 		})
 	}
