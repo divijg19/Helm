@@ -31,6 +31,7 @@ func (QuietRenderer) Outdated(report OutdatedReport) error {
 
 func (QuietRenderer) Update(report UpdateReport) error {
 	printSummaryLine("Updated", itoa(len(report.Updated)))
+	printSummaryLine("Up-to-date", itoa(len(report.UpToDate)))
 	printSummaryLine("Skipped", itoa(len(report.Skipped)))
 	printSummaryLine("Failed", itoa(len(report.Failed)))
 	printSummaryLine("Duration", formatDuration(report.Duration))

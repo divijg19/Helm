@@ -5,10 +5,11 @@ updatable: 2
 local: 1
 invalid: 1
 
-updated: hello
 updated: world
+up-to-date: hello
 skipped: <TMP>/gobin/notgo
 
-updated-count: 2
+updated-count: 1
+up-to-date-count: 1
 skipped-count: 1
 failed-count: 0

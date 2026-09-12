@@ -29,12 +29,22 @@ operation
     ├── list
     ├── plan (--check / --dry-run)
     ├── outdated
-    └── update
+    └── update (selection → outdated resolution → exact-version install)
     ↓
 rendering
     ↓
 exit
 ```
+
+The default update operation is outdated-first: it resolves the selected
+updatable tools with the same bounded-concurrency outdated check that backs
+`--outdated`, then installs only tools proven outdated, each at the exact
+version the check resolved (`go install <package>@<resolved>`). Discovery
+and eligibility identify tools Helm can manage; only a successful outdated
+check authorizing a newer version permits mutation. There is no outdated
+cache: each CLI invocation constructs a fresh `App` and performs one
+operation, so update resolves within its own invocation. Installation stays
+sequential while outdated resolution stays bounded-concurrent.
 
 The supported invocation names are `helm`, `Helm`, and `update-go-tools`.
 They all execute through `cmd/helm`; there are no alias-specific executable
@@ -60,7 +70,14 @@ instance. The memoization is invocation-local, not a persistent cache.
 - Discovery is sorted before reports are produced.
 - `--check` and `--dry-run` share one planning path.
 - `Plan` owns update selection; renderers do not re-derive it.
-- `InstallRef` and `InstallCommand` describe the same update command.
+- `InstallRef` and `InstallCommand` describe the update rule shown by
+  `--check`/`--dry-run` for eligible tools (`<package>@latest`); executed
+  installs pin the resolved version via `InstallExactRef`
+  (`<package>@<resolved>`), so the version evaluated is the version installed.
+- A tool is installed only when fresh outdated resolution reports
+  `Outdated == true` with no error and a usable resolved version; resolution
+  errors, retractions, cancellations, and unselected tools never authorize
+  installation.
 - JSON reports use stable operation names and empty arrays instead of `null`.
 - Human and CI renderers use stable report ordering and summary structure.
 - Environment-resolution errors wrap `tool.ErrGobinResolution` and map to

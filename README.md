@@ -37,6 +37,11 @@ helm --help / --version
 Use `--json` for machine-readable output, `--ci` for deterministic text, and
 `--quiet`/`-q` to suppress headers. `--dry-run` aliases `--check`.
 
+Updating is outdated-first: Helm checks the selected tools for newer versions
+and installs only the ones proven outdated, each at the exact version it just
+evaluated. Tools that are already current are reported as up-to-date and left
+untouched; tools whose update state cannot be determined are never installed.
+
 There are no subcommands; all interactions are flag-driven operating modes.
 
 ## Aliases

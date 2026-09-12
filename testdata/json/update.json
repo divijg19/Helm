@@ -2,8 +2,10 @@
   "operation": "update",
   "success": true,
   "updated": [
-    "hello",
     "world"
+  ],
+  "up_to_date": [
+    "hello"
   ],
   "skipped": [
     "<TMP>/gobin/notgo"

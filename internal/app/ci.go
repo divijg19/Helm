@@ -90,6 +90,9 @@ func (r CIRenderer) Update(report UpdateReport) error {
 	for _, name := range report.Updated {
 		fmt.Printf("updated: %s\n", name)
 	}
+	for _, name := range report.UpToDate {
+		fmt.Printf("up-to-date: %s\n", name)
+	}
 	for _, name := range report.Failed {
 		fmt.Printf("failed: %s\n", name)
 	}
@@ -101,6 +104,7 @@ func (r CIRenderer) Update(report UpdateReport) error {
 	}
 	fmt.Println()
 	fmt.Printf("updated-count: %d\n", len(report.Updated))
+	fmt.Printf("up-to-date-count: %d\n", len(report.UpToDate))
 	fmt.Printf("skipped-count: %d\n", len(report.Skipped))
 	fmt.Printf("failed-count: %d\n", len(report.Failed))
 	if len(report.Failed) > 0 {

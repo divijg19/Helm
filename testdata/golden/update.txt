@@ -11,8 +11,7 @@ Discovery
 Skipping local development binaries:
   • localdev
 
-[01/02] hello                        ✓
-[02/02] world                        ✓
+[01/01] world                        ✓
 
 Skipped
 
@@ -20,7 +19,8 @@ Skipped
 
 Summary
 
-Updated       2
+Updated       1
+Up-to-date    1
 Skipped       1
 Failed        0
 Duration      0.0s
