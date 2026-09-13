@@ -20,7 +20,7 @@ func discover(gobin string) ([]candidate, error) {
 		toolPath := filepath.Join(gobin, entry.Name())
 
 		info, err := entry.Info()
-		if err != nil || info.Mode()&0o111 == 0 {
+		if err != nil || !isExecutable(entry.Name(), info.Mode()) {
 			continue
 		}
 

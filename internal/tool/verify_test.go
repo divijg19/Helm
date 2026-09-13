@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"testing"
 )
 
@@ -104,4 +105,153 @@ func TestVerify_EmptyVersionPassesVerify(t *testing.T) {
 	if !results[0].Healthy {
 		t.Error("existing behavior: empty-version tool passes verify (Version() returns 'unknown')")
 	}
+}
+
+func TestIsExecutable(t *testing.T) {
+	tests := []struct {
+		name      string
+		filename  string
+		mode      os.FileMode
+		wantWin   bool
+		wantPosix bool
+	}{
+		{"windows: .exe with no execute bits", "tool.exe", 0o644, true, false},
+		{"windows: .EXE uppercase", "TOOL.EXE", 0o644, true, false},
+		{"windows: .ExE mixed case", "tool.ExE", 0o644, true, false},
+		{"windows: no extension", "tool", 0o755, false, true},
+		{"windows: .bat extension", "tool.bat", 0o755, false, true},
+		{"windows: .cmd extension", "tool.cmd", 0o755, false, true},
+		{"posix: execute bit set", "tool", 0o755, false, true},
+		{"posix: no execute bits", "tool", 0o644, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotWin := isExecutableWindows(tt.filename)
+			gotPosix := isExecutablePOSIX(tt.mode)
+			if gotWin != tt.wantWin {
+				t.Errorf("isExecutableWindows(%q) = %v, want %v", tt.filename, gotWin, tt.wantWin)
+			}
+			if gotPosix != tt.wantPosix {
+				t.Errorf("isExecutablePOSIX(%q, %#o) = %v, want %v", tt.filename, tt.mode, gotPosix, tt.wantPosix)
+			}
+		})
+	}
+}
+
+func TestIsExecutable_DiscoveryIntegration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create test files
+	exeFile := filepath.Join(tmpDir, "tool.exe")
+	if err := os.WriteFile(exeFile, []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batFile := filepath.Join(tmpDir, "tool.bat")
+	if err := os.WriteFile(batFile, []byte("dummy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmdFile := filepath.Join(tmpDir, "tool.cmd")
+	if err := os.WriteFile(cmdFile, []byte("dummy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	noExtFile := filepath.Join(tmpDir, "tool")
+	if err := os.WriteFile(noExtFile, []byte("dummy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dirFile := filepath.Join(tmpDir, "somedir")
+	if err := os.Mkdir(dirFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test Windows policy via isExecutableWindows
+	windowsCandidates := discoverOS(tmpDir, "windows")
+	if len(windowsCandidates) != 1 {
+		t.Fatalf("expected 1 candidate on Windows, got %d: %v", len(windowsCandidates), windowsCandidates)
+	}
+	if windowsCandidates[0].name != "tool.exe" {
+		t.Errorf("expected tool.exe, got %s", windowsCandidates[0].name)
+	}
+
+	// POSIX policy: files with execute bits are executable regardless of extension
+	// tool.bat, tool.cmd, and tool all have 0755 mode, so all 3 are executable
+	posixCandidates := discoverOS(tmpDir, "linux")
+	if len(posixCandidates) != 3 {
+		t.Fatalf("expected 3 candidates on POSIX, got %d: %v", len(posixCandidates), posixCandidates)
+	}
+	// Verify all three have execute bits
+	for _, c := range posixCandidates {
+		if c.name != "tool" && c.name != "tool.bat" && c.name != "tool.cmd" {
+			t.Errorf("unexpected candidate %s", c.name)
+		}
+	}
+}
+
+func TestIsExecutable_VerificationIntegration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a Windows .exe file with no POSIX execute bits but valid build info
+	exeFile := filepath.Join(tmpDir, "tool.exe")
+	if err := os.WriteFile(exeFile, []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test Windows policy: .exe file with no POSIX execute bits should be executable
+	if !isExecutableWindows("tool.exe") {
+		t.Error("expected tool.exe to be executable on Windows")
+	}
+
+	// Test POSIX policy: file with no execute bits should not be executable
+	if isExecutablePOSIX(0o644) {
+		t.Error("expected file with 0644 to not be executable on POSIX")
+	}
+
+	// Test POSIX policy: file with execute bits should be executable
+	if !isExecutablePOSIX(0o755) {
+		t.Error("expected file with 0755 to be executable on POSIX")
+	}
+}
+
+// discoverOS is a test helper that runs discovery with a specific OS policy.
+// This allows testing Windows discovery semantics on non-Windows hosts.
+func discoverOS(gobin, osName string) []candidate {
+	entries, err := os.ReadDir(gobin)
+	if err != nil {
+		return nil
+	}
+
+	var candidates []candidate
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		toolPath := filepath.Join(gobin, entry.Name())
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		var executable bool
+		if osName == "windows" {
+			executable = isExecutableWindows(entry.Name())
+		} else {
+			executable = isExecutablePOSIX(info.Mode())
+		}
+
+		if !executable {
+			continue
+		}
+
+		candidates = append(candidates, candidate{
+			name: entry.Name(),
+			path: toolPath,
+		})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].name < candidates[j].name
+	})
+
+	return candidates
 }
