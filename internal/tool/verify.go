@@ -16,7 +16,7 @@ func Verify(tools []Tool) []VerificationResult {
 		res := VerificationResult{Tool: t}
 
 		info, statErr := os.Stat(t.Path())
-		if statErr != nil || info.Mode()&0o111 == 0 {
+		if statErr != nil || !isExecutable(t.Name(), info.Mode()) {
 			res.Healthy = false
 			res.Error = "file is not accessible or not executable"
 			results = append(results, res)
