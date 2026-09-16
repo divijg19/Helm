@@ -2,6 +2,7 @@ package tool
 
 import (
 	"os"
+	"path/filepath"
 )
 
 type VerificationResult struct {
@@ -16,7 +17,7 @@ func Verify(tools []Tool) []VerificationResult {
 		res := VerificationResult{Tool: t}
 
 		info, statErr := os.Stat(t.Path())
-		if statErr != nil || !isExecutable(t.Name(), info.Mode()) {
+		if statErr != nil || !isExecutable(filepath.Base(t.Path()), info.Mode()) {
 			res.Healthy = false
 			res.Error = "file is not accessible or not executable"
 			results = append(results, res)
@@ -26,13 +27,6 @@ func Verify(tools []Tool) []VerificationResult {
 		if t.PackagePath() == "" {
 			res.Healthy = false
 			res.Error = "missing main package path"
-			results = append(results, res)
-			continue
-		}
-
-		if t.Version() == "" {
-			res.Healthy = false
-			res.Error = "missing version metadata"
 			results = append(results, res)
 			continue
 		}

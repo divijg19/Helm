@@ -210,7 +210,11 @@ func (r TerminalRenderer) OnProgress(p tool.Progress) {
 	switch p.Action {
 	case "Start":
 		if p.Version != "" {
-			fmt.Printf("[%02d/%02d] %-18s %s → %s", p.Current, p.Total, p.Tool.Name(), p.Tool.Version(), p.Version)
+			// Pad the version transition so the completion mark below stays in a
+			// fixed column regardless of version-string length. Oversized
+			// transitions are never truncated; they simply extend past the
+			// alignment column.
+			fmt.Printf("[%02d/%02d] %-18s %-15s", p.Current, p.Total, p.Tool.Name(), p.Tool.Version()+" → "+p.Version)
 		} else {
 			fmt.Printf("[%02d/%02d] %-18s", p.Current, p.Total, p.Tool.Name())
 		}
@@ -271,6 +275,11 @@ func (r TerminalRenderer) Update(report UpdateReport) error {
 		sort.Strings(modules)
 		for _, m := range modules {
 			details := moduleMap[m]
+			// Order children within a module deterministically by display name;
+			// grouping by module is otherwise input-order dependent.
+			sort.Slice(details, func(i, j int) bool {
+				return details[i].Name < details[j].Name
+			})
 			// Use the first detail's resolved version as the module header.
 			first := details[0]
 			modHeader := first.ModulePath

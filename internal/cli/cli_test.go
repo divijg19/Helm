@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"helm/internal/app"
@@ -87,5 +88,75 @@ func TestRunPropagatesNewAppErrorToExitFailure(t *testing.T) {
 	}
 	if code == ExitEnv {
 		t.Errorf("generic NewApp failure must NOT use ExitEnv (%d); that code is reserved for environment-resolution failures", ExitEnv)
+	}
+}
+
+// TestSplitOperation_CheckDryRunArePlanOnly documents the dispatch contract for
+// v1.9.2: --check and --dry-run are plan flags parsed by parseFlags and are
+// NEVER positional operations, so splitOperation must not treat them as
+// operations and Run must never dispatch them as explicit operations.
+func TestSplitOperation_CheckDryRunArePlanOnly(t *testing.T) {
+	tests := []struct {
+		name       string
+		positional []string
+		wantOp     string
+		wantArgs   []string
+	}{
+		{"no args", nil, "", []string{}},
+		{"list", []string{"--list"}, "--list", []string{}},
+		{"list with tool", []string{"--list", "hello"}, "--list", []string{"hello"}},
+		{"info with target", []string{"--info", "hello"}, "--info", []string{"hello"}},
+		{"outdated", []string{"--outdated"}, "--outdated", []string{}},
+		{"help", []string{"--help"}, "--help", []string{}},
+		{"version", []string{"--version"}, "--version", []string{}},
+		{"tool names stay update args", []string{"hello", "world"}, "", []string{"hello", "world"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			op, args := splitOperation(tt.positional)
+			if op != tt.wantOp {
+				t.Errorf("operation = %q, want %q", op, tt.wantOp)
+			}
+			if !slices.Equal(args, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			}
+		})
+	}
+}
+
+// TestParseFlags_CheckAndDryRunSetPlan confirms --check/--dry-run are converted
+// into the plan option by parseFlags and never reach the positional slice, which
+// is why the old dispatch branches for them were unreachable.
+func TestParseFlags_CheckAndDryRunSetPlan(t *testing.T) {
+	check, code := parseFlags([]string{"--check"})
+	if code != 0 {
+		t.Fatalf("parseFlags(--check) code = %d, want 0", code)
+	}
+	dry, code := parseFlags([]string{"--dry-run"})
+	if code != 0 {
+		t.Fatalf("parseFlags(--dry-run) code = %d, want 0", code)
+	}
+	if !check.plan || !dry.plan {
+		t.Errorf("plan must be true for --check/%v and --dry-run/%v", check, dry)
+	}
+	if len(check.positional) != 0 || len(dry.positional) != 0 {
+		t.Errorf("--check/--dry-run must not reach positional, got %v / %v", check.positional, dry.positional)
+	}
+}
+
+// TestParseFlags_PlanFlagsMayCombineWithOperations proves --check still works
+// alongside explicit operations without changing their dispatch (the plan flag
+// only drives the default no-operation path).
+func TestParseFlags_PlanFlagsMayCombineWithOperations(t *testing.T) {
+	opts, code := parseFlags([]string{"--check", "--list"})
+	if code != 0 {
+		t.Fatalf("parseFlags code = %d, want 0", code)
+	}
+	if !opts.plan {
+		t.Error("expected plan to be set")
+	}
+	if !slices.Equal(opts.positional, []string{"--list"}) {
+		t.Errorf("positional = %v, want [--list]", opts.positional)
 	}
 }

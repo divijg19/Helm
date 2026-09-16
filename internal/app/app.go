@@ -275,31 +275,37 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 		})
 	}
 
-	// Build installation detail per resolved candidate. Each entry records the
-	// tool's previous installed version, the resolved version, and its paths.
-	for _, c := range set.Candidates {
-		resultsFor := func() []tool.ToolUpdateResult {
-			for _, r := range results {
-				if r.Tool.Name() == c.Tool.Name() {
-					return []tool.ToolUpdateResult{r}
-				}
-			}
-			return []tool.ToolUpdateResult{}
-		}()
-		prevVersion := ""
-		if len(resultsFor) > 0 && resultsFor[0].Success {
-			// Pre-resolution version cannot be inferred from result alone; we use
-			// the tool's Version() field which reflects the installed binary version.
-			prevVersion = resultsFor[0].Tool.Version()
+	// Index install results by tool name once so each candidate lookup is O(1)
+	// instead of a linear scan over the entire result set per candidate.
+	// Tool names are unique by construction (one entry per GOBIN file through
+	// discovery, preserved 1:1 through resolution and installation), so each
+	// name maps to exactly one result in practice. The first result wins on
+	// duplicates to preserve the legacy first-match behavior.
+	resultByName := make(map[string]tool.ToolUpdateResult, len(results))
+	for _, r := range results {
+		if _, exists := resultByName[r.Tool.Name()]; !exists {
+			resultByName[r.Tool.Name()] = r
 		}
-		detail := UpdatedToolDetail{
+	}
+
+	// Build installation detail per resolved candidate whose install succeeded.
+	// Each entry records the tool's previous installed version, the resolved
+	// version, and its paths. Failed installs stay confined to the failure
+	// reporting path above and must not surface as installations.
+	for _, c := range set.Candidates {
+		res, ok := resultByName[c.Tool.Name()]
+		if !ok || !res.Success {
+			continue
+		}
+		// Pre-resolution version cannot be inferred from result alone; we use
+		// the tool's Version() field which reflects the installed binary version.
+		updatedDetail = append(updatedDetail, UpdatedToolDetail{
 			Name:        c.Tool.Name(),
 			PackagePath: c.Tool.PackagePath(),
 			ModulePath:  c.Tool.ModulePath(),
-			Previous:    prevVersion,
+			Previous:    res.Tool.Version(),
 			Resolved:    c.Version,
-		}
-		updatedDetail = append(updatedDetail, detail)
+		})
 	}
 
 	skipped := make([]string, 0, len(loadRes.Invalid))

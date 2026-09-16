@@ -83,6 +83,10 @@ func TestVerify_EmptyPackagePath(t *testing.T) {
 	}
 }
 
+// TestVerify_EmptyVersionPassesVerify documents the preserved unknown-version
+// behavior: Tool.Version() returns "unknown" for missing metadata, which is
+// != "", so the former `t.Version() == ""` check in Verify could never
+// trigger and was removed in v1.9.2. Missing-version tools remain healthy.
 func TestVerify_EmptyVersionPassesVerify(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "noversion")
 	if err := os.WriteFile(path, []byte("dummy"), 0o755); err != nil {
@@ -98,12 +102,32 @@ func TestVerify_EmptyVersionPassesVerify(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	// Tool.Version() returns "unknown" for empty metadata, which is != "",
-	// so Verify's `t.Version() == ""` check never triggers. This test
-	// documents the existing behavior; if Version() is changed to return ""
-	// for empty, this test should flip to expect unhealthy.
 	if !results[0].Healthy {
-		t.Error("existing behavior: empty-version tool passes verify (Version() returns 'unknown')")
+		t.Error("established behavior: empty-version tool passes verify (Version() returns 'unknown')")
+	}
+}
+
+// TestVerify_UsesInstalledFilename is the regression test for the v1.9.2
+// verification fix: executability must be judged from the file actually
+// present at t.Path() (via filepath.Base), not from the logical tool name,
+// which may differ from the installed filename. It exercises the production
+// Verify() path. On Windows hosts the .exe basename is required for a healthy
+// verdict; this test would fail if Verify() passed t.Name() (extensionless)
+// instead of the installed filename.
+func TestVerify_UsesInstalledFilename(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool.exe")
+	if err := os.WriteFile(path, []byte("dummy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools := []Tool{
+		{name: "tool", path: path, info: validBuildInfo()},
+	}
+	results := Verify(tools)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Healthy {
+		t.Errorf("expected healthy: logical name is %q but installed file %q is executable on this platform (%s)", "tool", path, results[0].Error)
 	}
 }
 
@@ -139,7 +163,11 @@ func TestIsExecutable(t *testing.T) {
 	}
 }
 
-func TestIsExecutable_DiscoveryIntegration(t *testing.T) {
+// TestIsExecutable_DiscoverySemantics exercises the discovery candidate
+// predicate on a representative GOBIN directory without invoking the real
+// discover() (which is bound to the host runtime.GOOS). It is a semantics
+// test of the predicate rules, not a discovery integration test.
+func TestIsExecutable_DiscoverySemantics(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create test files
@@ -187,7 +215,10 @@ func TestIsExecutable_DiscoveryIntegration(t *testing.T) {
 	}
 }
 
-func TestIsExecutable_VerificationIntegration(t *testing.T) {
+// TestIsExecutable_PlatformPolicies exercises the Windows and POSIX predicates
+// directly. It does NOT call Verify(); the production Verify() executable check
+// is covered by TestVerify_UsesInstalledFilename and TestVerify_Executable.
+func TestIsExecutable_PlatformPolicies(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a Windows .exe file with no POSIX execute bits but valid build info

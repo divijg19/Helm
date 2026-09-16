@@ -412,3 +412,77 @@ func TestJSONRenderer_InfoHasNoEnvelope(t *testing.T) {
 		t.Errorf("--info --json must stay a bare ToolReport without the operation envelope (contract):\n%s", out)
 	}
 }
+
+// TestTerminalRenderer_ProgressCheckmarkAlignment is the regression test for
+// the v1.9.2 progress-column fix: the completion mark must land in the same
+// column regardless of version-string length, and oversize transitions
+// (long or unknown version strings) must never be truncated.
+func TestTerminalRenderer_ProgressCheckmarkAlignment(t *testing.T) {
+	r := TerminalRenderer{}
+	base := makeTool("world", "example.com/world", "v1.0.0")
+
+	alignCol := -1
+	for _, resolved := range []string{"v1.3.0", "v0.5"} {
+		out, _ := captureOutput(t, func() error {
+			r.OnProgress(tool.Progress{Current: 1, Total: 1, Tool: base, Version: resolved, Action: "Start"})
+			r.OnProgress(tool.Progress{Current: 1, Total: 1, Tool: base, Version: resolved, Action: "Complete", Success: true})
+			return nil
+		})
+		idx := strings.Index(out, symCheck)
+		if idx < 0 {
+			t.Fatalf("expected %q in progress output for resolved %q:\n%s", symCheck, resolved, out)
+		}
+		if alignCol == -1 {
+			alignCol = idx
+		} else if idx != alignCol {
+			t.Errorf("checkmark column %d != %d for resolved %q:\n%s", idx, alignCol, resolved, out)
+		}
+	}
+
+	// Oversize transitions (e.g. an "unknown" current version combined with a
+	// long resolved version) exceed the alignment column but must not be
+	// truncated or mangled.
+	for _, resolved := range []string{"unknown", "v2024.1.1"} {
+		out, _ := captureOutput(t, func() error {
+			r.OnProgress(tool.Progress{Current: 1, Total: 1, Tool: base, Version: resolved, Action: "Start"})
+			r.OnProgress(tool.Progress{Current: 1, Total: 1, Tool: base, Version: resolved, Action: "Complete", Success: true})
+			return nil
+		})
+		if !strings.Contains(out, "v1.0.0 → "+resolved) {
+			t.Errorf("oversize transition for resolved %q must not be truncated:\n%s", resolved, out)
+		}
+	}
+}
+
+// TestTerminalRenderer_InstallationChildOrderDeterministic is the regression
+// test for the v1.9.2 installation-tree fix: tools sharing a module must
+// render in a stable name order regardless of the input detail ordering.
+func TestTerminalRenderer_InstallationChildOrderDeterministic(t *testing.T) {
+	r := TerminalRenderer{}
+	zeta := UpdatedToolDetail{Name: "zeta", ModulePath: "example.com/suite", Previous: "v1.0.0", Resolved: "v1.2.0", PackagePath: "example.com/suite/cmd/zeta"}
+	alpha := UpdatedToolDetail{Name: "alpha", ModulePath: "example.com/suite", Previous: "v1.0.0", Resolved: "v1.2.0", PackagePath: "example.com/suite/cmd/alpha"}
+
+	reportFwd := UpdateReport{UpdatedDetail: []UpdatedToolDetail{alpha, zeta}}
+	reportRev := UpdateReport{UpdatedDetail: []UpdatedToolDetail{zeta, alpha}}
+
+	outFwd, err := captureOutput(t, func() error { return r.Update(reportFwd) })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outRev, err := captureOutput(t, func() error { return r.Update(reportRev) })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if outFwd != outRev {
+		t.Errorf("installations output depends on input order (must sort children by name):\nfwd:\n%s\nrev:\n%s", outFwd, outRev)
+	}
+	alphaIdx := strings.Index(outFwd, "    alpha ")
+	zetaIdx := strings.Index(outFwd, "    zeta ")
+	if alphaIdx < 0 || zetaIdx < 0 {
+		t.Fatalf("expected both alpha and zeta children under the module:\n%s", outFwd)
+	}
+	if alphaIdx > zetaIdx {
+		t.Errorf("children not sorted by name (alpha after zeta):\n%s", outFwd)
+	}
+}
