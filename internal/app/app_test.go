@@ -126,6 +126,17 @@ func TestUpdateReport_ResolutionFailuresReported(t *testing.T) {
 	}
 }
 
+// TestUpdateReport_PreservesDuration pins the duration plumbing: the install
+// phase wall time measured by UpdateCandidates must reach the report
+// unchanged. Duration semantics (total install-phase wall time, resolution
+// excluded) are defined on UpdateCandidates; this test guards the handoff.
+func TestUpdateReport_PreservesDuration(t *testing.T) {
+	report := (&App{}).updateReport(nil, tool.LoadResult{}, tool.CandidateSet{}, 42, nil)
+	if report.Duration != 42 {
+		t.Errorf("report Duration = %v, want 42 (measured install-phase wall time)", report.Duration)
+	}
+}
+
 // TestUpdateReport_DuplicateResultsKeepFirstMatch pins the legacy first-match
 // behavior for duplicated tool names: candidate matching must use the first
 // result with a given name, exactly as the pre-v1.9.2 linear scan did.

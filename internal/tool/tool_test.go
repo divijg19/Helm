@@ -78,3 +78,48 @@ func TestToolInstallTarget(t *testing.T) {
 		t.Errorf("Tool.InstallTarget() = %v, want %v", got, "example.com/tool/cmd/tool")
 	}
 }
+
+// TestToolModulePathFallback pins the module-path fallback chain behind
+// installation grouping: a tool reports its module Main.Path, falling back to
+// the main package path when the module path is absent, and "" only when it
+// carries no build metadata at all. Load keeps only tools with a non-empty
+// package path, so grouped installation headers always have a module key in
+// production; an empty ModulePath can only arise from synthetic Tools.
+func TestToolModulePathFallback(t *testing.T) {
+	tests := []struct {
+		name string
+		bi   *buildinfo.BuildInfo
+		want string
+	}{
+		{
+			name: "module path preferred",
+			bi: &buildinfo.BuildInfo{
+				Path: "example.com/tool/cmd/tool",
+				Main: debug.Module{Path: "example.com/tool", Version: "v1.0.0"},
+			},
+			want: "example.com/tool",
+		},
+		{
+			name: "falls back to package path",
+			bi: &buildinfo.BuildInfo{
+				Path: "example.com/tool/cmd/tool",
+				Main: debug.Module{Version: "v1.0.0"},
+			},
+			want: "example.com/tool/cmd/tool",
+		},
+		{
+			name: "missing metadata reports empty",
+			bi:   nil,
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := Tool{name: "test", path: "/fake/path", info: tt.bi}
+			if got := tool.ModulePath(); got != tt.want {
+				t.Errorf("Tool.ModulePath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

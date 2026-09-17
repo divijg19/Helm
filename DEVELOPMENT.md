@@ -51,3 +51,9 @@ Releases are tag-driven. Push a semver tag of the form `vX.Y.Z`; the release
 workflow builds the artifacts with GoReleaser, publishes checksums, and creates
 a GitHub Release. The first-party installer (`install.sh`) downloads and verifies
 those artifacts. Do not create a release by pushing to a branch.
+
+The reported binary version is injected at release time: GoReleaser passes the
+tag via `ldflags` into `helm/internal/cli.version` (see `.goreleaser.yml`).
+The `version` default in source is only a local-build fallback and is
+intentionally not bumped per release; end-to-end tests pin their own version
+through `ldflags` the same way.
