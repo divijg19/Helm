@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -131,6 +131,40 @@ func TestVerify_UsesInstalledFilename(t *testing.T) {
 	}
 }
 
+// TestVerify_PassesInstalledBasenameToPredicate proves the v1.9.2 wiring fix
+// through the production Verify() path on any host: it observes which filename
+// Verify hands to the executable predicate and requires the installed
+// basename, not the logical tool name. Unlike TestVerify_UsesInstalledFilename
+// (which only discriminates on Windows, where POSIX-blind names fail the .exe
+// policy), this test fails on every platform if Verify regresses to t.Name().
+func TestVerify_PassesInstalledBasenameToPredicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool.exe")
+	if err := os.WriteFile(path, []byte("dummy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := executablePolicy
+	var gotName string
+	executablePolicy = func(name string, mode os.FileMode) bool {
+		gotName = name
+		return true
+	}
+	defer func() { executablePolicy = prev }()
+
+	results := Verify([]Tool{
+		{name: "tool", path: path, info: validBuildInfo()},
+	})
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if gotName != "tool.exe" {
+		t.Errorf("predicate received filename %q, want installed basename %q", gotName, "tool.exe")
+	}
+	if !results[0].Healthy {
+		t.Errorf("expected healthy when the predicate accepts the file, got: %s", results[0].Error)
+	}
+}
+
 func TestIsExecutable(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -163,10 +197,9 @@ func TestIsExecutable(t *testing.T) {
 	}
 }
 
-// TestIsExecutable_DiscoverySemantics exercises the discovery candidate
-// predicate on a representative GOBIN directory without invoking the real
-// discover() (which is bound to the host runtime.GOOS). It is a semantics
-// test of the predicate rules, not a discovery integration test.
+// TestIsExecutable_DiscoverySemantics exercises the real discovery loop with
+// an explicit platform policy, so Windows discovery semantics are covered on
+// any host without duplicating the production loop in a test helper.
 func TestIsExecutable_DiscoverySemantics(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -192,26 +225,38 @@ func TestIsExecutable_DiscoverySemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Test Windows policy via isExecutableWindows
-	windowsCandidates := discoverOS(tmpDir, "windows")
-	if len(windowsCandidates) != 1 {
-		t.Fatalf("expected 1 candidate on Windows, got %d: %v", len(windowsCandidates), windowsCandidates)
+	windowsPolicy := func(name string, _ os.FileMode) bool {
+		return isExecutableWindows(name)
 	}
-	if windowsCandidates[0].name != "tool.exe" {
-		t.Errorf("expected tool.exe, got %s", windowsCandidates[0].name)
+	posixPolicy := func(_ string, mode os.FileMode) bool {
+		return isExecutablePOSIX(mode)
+	}
+	candidateNames := func(t *testing.T, cands []candidate) []string {
+		t.Helper()
+		names := make([]string, 0, len(cands))
+		for _, c := range cands {
+			names = append(names, c.name)
+		}
+		return names
 	}
 
-	// POSIX policy: files with execute bits are executable regardless of extension
-	// tool.bat, tool.cmd, and tool all have 0755 mode, so all 3 are executable
-	posixCandidates := discoverOS(tmpDir, "linux")
-	if len(posixCandidates) != 3 {
-		t.Fatalf("expected 3 candidates on POSIX, got %d: %v", len(posixCandidates), posixCandidates)
+	// Windows policy: only .exe files are candidates; directories are skipped.
+	windowsCandidates, err := discoverWithPolicy(tmpDir, windowsPolicy)
+	if err != nil {
+		t.Fatalf("discoverWithPolicy failed: %v", err)
 	}
-	// Verify all three have execute bits
-	for _, c := range posixCandidates {
-		if c.name != "tool" && c.name != "tool.bat" && c.name != "tool.cmd" {
-			t.Errorf("unexpected candidate %s", c.name)
-		}
+	if got, want := candidateNames(t, windowsCandidates), []string{"tool.exe"}; !slices.Equal(got, want) {
+		t.Errorf("windows candidates = %v, want %v", got, want)
+	}
+
+	// POSIX policy: files with execute bits are candidates regardless of
+	// extension, in sorted order; directories are skipped.
+	posixCandidates, err := discoverWithPolicy(tmpDir, posixPolicy)
+	if err != nil {
+		t.Fatalf("discoverWithPolicy failed: %v", err)
+	}
+	if got, want := candidateNames(t, posixCandidates), []string{"tool", "tool.bat", "tool.cmd"}; !slices.Equal(got, want) {
+		t.Errorf("posix candidates = %v, want %v", got, want)
 	}
 }
 
@@ -241,48 +286,4 @@ func TestIsExecutable_PlatformPolicies(t *testing.T) {
 	if !isExecutablePOSIX(0o755) {
 		t.Error("expected file with 0755 to be executable on POSIX")
 	}
-}
-
-// discoverOS is a test helper that runs discovery with a specific OS policy.
-// This allows testing Windows discovery semantics on non-Windows hosts.
-func discoverOS(gobin, osName string) []candidate {
-	entries, err := os.ReadDir(gobin)
-	if err != nil {
-		return nil
-	}
-
-	var candidates []candidate
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		toolPath := filepath.Join(gobin, entry.Name())
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		var executable bool
-		if osName == "windows" {
-			executable = isExecutableWindows(entry.Name())
-		} else {
-			executable = isExecutablePOSIX(info.Mode())
-		}
-
-		if !executable {
-			continue
-		}
-
-		candidates = append(candidates, candidate{
-			name: entry.Name(),
-			path: toolPath,
-		})
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].name < candidates[j].name
-	})
-
-	return candidates
 }

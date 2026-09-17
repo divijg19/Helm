@@ -110,6 +110,11 @@ func Update(ctx context.Context, tools []Tool, filter []string, dryRun bool, run
 // ResolveUpdateCandidates; the resolved version is installed verbatim and is
 // never re-resolved to @latest. There is intentionally no fallback: an exact
 // install failure is an ordinary update failure.
+//
+// The returned duration is the total wall time of the install phase only:
+// outdated resolution happens beforehand in ResolveUpdateCandidates and is
+// excluded. Renderers display it as the operation duration; it is not part of
+// the JSON contract.
 func UpdateCandidates(ctx context.Context, candidates []UpdateCandidate, runner Runner, onProgress func(Progress)) ([]ToolUpdateResult, time.Duration, []Diagnostic) {
 	start := time.Now()
 	if runner == nil {

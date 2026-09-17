@@ -323,3 +323,26 @@ func TestInstallExactRef(t *testing.T) {
 		t.Errorf("InstallExactRef = %q, want example.com/foo/cmd/foo@v1.4.2", got)
 	}
 }
+
+// TestResolveCandidates_SameModuleSharesResolvedVersion pins the invariant
+// behind installation-tree module headers: tools from one module resolve
+// through the same module path, so every candidate from that module carries
+// the identical resolved version and the group header is input-order
+// independent.
+func TestResolveCandidates_SameModuleSharesResolvedVersion(t *testing.T) {
+	runner := &moduleRunner{versions: map[string]string{"example.com/suite": "v1.5.0"}}
+	tools := []Tool{
+		makeOutdatedTool("toolA", "example.com/suite", "v1.0.0"),
+		makeOutdatedTool("toolB", "example.com/suite", "v1.0.0"),
+	}
+
+	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)
+	if len(set.Candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(set.Candidates))
+	}
+	for _, c := range set.Candidates {
+		if c.Version != "v1.5.0" {
+			t.Errorf("candidate %s resolved to %q, want v1.5.0 (single module, single latest)", c.Tool.Name(), c.Version)
+		}
+	}
+}
