@@ -99,44 +99,38 @@ func Run(inv Invocation, args []string) int {
 		return ExitSuccess
 	}
 
-	if operation != "" {
-		loadRes, err := application.LoadTools()
-		if err != nil {
-			return fail("Error loading tools:", err)
-		}
-		renderHeader(ctx, application, renderer, loadRes, mode)
-
-		switch operation {
-		case "--list":
-			if err := application.RunInventory(); err != nil {
-				return fail("Error:", err)
-			}
-		case "--outdated":
-			if err := application.RunOutdated(ctx); err != nil {
-				return fail("Error:", err)
-			}
-		case "--info":
-			if len(toolArgs) == 0 {
-				fmt.Fprintln(os.Stderr, "Error: Option --info requires a tool name.")
-				return ExitUsage
-			}
-			if err := application.RunInfo(toolArgs[0]); err != nil {
-				fmt.Fprintln(os.Stderr, "Error:", err)
-				return ExitUsage
-			}
-		case "--check", "--dry-run":
-			if err := application.RunPlan(ctx, toolArgs); err != nil {
-				return fail("Error:", err)
-			}
-		}
-		return ExitSuccess
-	}
-
+	// Every remaining operation loads the tool set once and renders the
+	// discovery header before dispatch. Both the explicit-operation path and
+	// the default update/plan path share this setup.
 	loadRes, err := application.LoadTools()
 	if err != nil {
 		return fail("Error loading tools:", err)
 	}
 	renderHeader(ctx, application, renderer, loadRes, mode)
+
+	switch operation {
+	case "--list":
+		if err := application.RunInventory(); err != nil {
+			return fail("Error:", err)
+		}
+	case "--outdated":
+		if err := application.RunOutdated(ctx); err != nil {
+			return fail("Error:", err)
+		}
+	case "--info":
+		if len(toolArgs) == 0 {
+			fmt.Fprintln(os.Stderr, "Error: Option --info requires a tool name.")
+			return ExitUsage
+		}
+		if err := application.RunInfo(toolArgs[0]); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			return ExitUsage
+		}
+	}
+
+	if operation != "" {
+		return ExitSuccess
+	}
 
 	if opts.plan {
 		if err := application.RunPlan(ctx, toolArgs); err != nil {
@@ -185,7 +179,7 @@ func splitOperation(positional []string) (string, []string) {
 		return "", nil
 	}
 	switch positional[0] {
-	case "--list", "--outdated", "--check", "--dry-run", "--help", "-h", "--version", "-v", "--info":
+	case "--list", "--outdated", "--help", "-h", "--version", "-v", "--info":
 		return positional[0], positional[1:]
 	}
 	return "", positional

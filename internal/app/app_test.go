@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"helm/internal/tool"
@@ -31,5 +32,124 @@ func TestNewAppPropagatesGobinResolutionError(t *testing.T) {
 	}
 	if !errors.Is(err, tool.ErrGobinResolution) {
 		t.Fatalf("expected ErrGobinResolution, got %v", err)
+	}
+}
+
+// TestUpdateReport_OnlySuccessfulCandidatesInDetail is the regression test for
+// the v1.9.2 updateReport fix: only candidates whose install succeeded may
+// appear in UpdatedDetail (and therefore the Installations tree). A failed
+// install must stay confined to the Failed list, and a candidate without any
+// matching result must not be silently classified as installed.
+func TestUpdateReport_OnlySuccessfulCandidatesInDetail(t *testing.T) {
+	okTool := makeTool("good", "example.com/good", "v1.0.0")
+	failTool := makeTool("bad", "example.com/bad", "v1.0.0")
+	ghostTool := makeTool("ghost", "example.com/ghost", "v1.0.0")
+
+	set := tool.CandidateSet{
+		Candidates: []tool.UpdateCandidate{
+			{Tool: okTool, Version: "v1.2.0"},
+			{Tool: failTool, Version: "v1.3.0"},
+			{Tool: ghostTool, Version: "v1.4.0"},
+		},
+		UpToDate: []tool.Tool{makeTool("meh", "example.com/meh", "v1.0.0")},
+	}
+
+	results := []tool.ToolUpdateResult{
+		{Tool: okTool, Success: true},
+		{Tool: failTool, Success: false, Error: errors.New("simulated install failure")},
+	}
+
+	report := (&App{}).updateReport(results, tool.LoadResult{}, set, 0, nil)
+
+	if got := strings.Join(report.Updated, ","); got != "good" {
+		t.Errorf("Updated = %q, want [good]", got)
+	}
+	if got := strings.Join(report.Failed, ","); got != "bad" {
+		t.Errorf("Failed = %q, want [bad]", got)
+	}
+	if len(report.UpdatedDetail) != 1 {
+		t.Fatalf("UpdatedDetail = %+v, want exactly the one successful installation", report.UpdatedDetail)
+	}
+	d := report.UpdatedDetail[0]
+	if d.Name != "good" {
+		t.Errorf("UpdatedDetail[0].Name = %q, want good", d.Name)
+	}
+	if d.Previous != "v1.0.0" || d.Resolved != "v1.2.0" {
+		t.Errorf("UpdatedDetail[0] version transition = %q -> %q, want v1.0.0 -> v1.2.0", d.Previous, d.Resolved)
+	}
+	if d.PackagePath != "example.com/good/cmd/good" || d.ModulePath != "example.com/good" {
+		t.Errorf("UpdatedDetail[0] paths = %q / %q", d.PackagePath, d.ModulePath)
+	}
+}
+
+// TestUpdateReport_EmptyResultsLeaveDetailEmpty covers the empty and partial
+// result-set edge cases: with no install results, no candidate may appear as
+// installed, and no tool may be misclassified as failed.
+func TestUpdateReport_EmptyResultsLeaveDetailEmpty(t *testing.T) {
+	set := tool.CandidateSet{
+		Candidates: []tool.UpdateCandidate{
+			{Tool: makeTool("good", "example.com/good", "v1.0.0"), Version: "v1.2.0"},
+		},
+	}
+
+	report := (&App{}).updateReport(nil, tool.LoadResult{}, set, 0, nil)
+
+	if len(report.UpdatedDetail) != 0 {
+		t.Errorf("UpdatedDetail = %+v, want empty when no results exist", report.UpdatedDetail)
+	}
+	if len(report.Updated) != 0 || len(report.Failed) != 0 {
+		t.Errorf("expected empty Updated/Failed, got %v / %v", report.Updated, report.Failed)
+	}
+}
+
+// TestUpdateReport_ResolutionFailuresReported proves resolution-vetoed tools
+// remain in the failure path with an Outdated diagnostic, independent of the
+// install-result scan.
+func TestUpdateReport_ResolutionFailuresReported(t *testing.T) {
+	resTool := makeTool("res", "example.com/res", "v1.0.0")
+	set := tool.CandidateSet{
+		Failed: []tool.OutdatedResult{
+			{Tool: resTool, Error: errors.New("resolution vetoed install")},
+		},
+	}
+
+	report := (&App{}).updateReport(nil, tool.LoadResult{}, set, 0, nil)
+
+	if got := strings.Join(report.Failed, ","); got != "res" {
+		t.Errorf("Failed = %q, want [res]", got)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Category != "Outdated" {
+		t.Errorf("expected one Outdated diagnostic, got %+v", report.Diagnostics)
+	}
+	if report.Success {
+		t.Error("report must be unsuccessful while any tool failed")
+	}
+}
+
+// TestUpdateReport_DuplicateResultsKeepFirstMatch pins the legacy first-match
+// behavior for duplicated tool names: candidate matching must use the first
+// result with a given name, exactly as the pre-v1.9.2 linear scan did.
+// Production cannot produce duplicates (names stay unique 1:1 from discovery
+// through resolution and installation), so this guards the function contract
+// for direct callers rather than a reachable runtime path.
+func TestUpdateReport_DuplicateResultsKeepFirstMatch(t *testing.T) {
+	dupTool := makeTool("dup", "example.com/dup", "v1.0.0")
+	set := tool.CandidateSet{
+		Candidates: []tool.UpdateCandidate{
+			{Tool: dupTool, Version: "v1.2.0"},
+		},
+	}
+	results := []tool.ToolUpdateResult{
+		{Tool: dupTool, Success: true},
+		{Tool: dupTool, Success: false, Error: errors.New("stale duplicate result")},
+	}
+
+	report := (&App{}).updateReport(results, tool.LoadResult{}, set, 0, nil)
+
+	if len(report.UpdatedDetail) != 1 {
+		t.Fatalf("UpdatedDetail = %+v, want the first (successful) match for a duplicated tool name", report.UpdatedDetail)
+	}
+	if got := report.UpdatedDetail[0].Previous; got != "v1.0.0" {
+		t.Errorf("UpdatedDetail[0].Previous = %q, want v1.0.0 from the first matching result", got)
 	}
 }
