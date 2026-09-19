@@ -43,10 +43,21 @@ evaluated. Tools that are already current are reported as up-to-date and left
 untouched; tools whose update state cannot be determined are never installed.
 
 Tool names passed as filters must match installed tools: unknown names are
-rejected with exit code 2 and no report is produced. Operations that encounter
-failures exit non-zero (`1`): failed installs, failed outdated checks, and
-inventory issues. Machine-readable `--json` output carries the same
-success/failure contract as terminal output.
+rejected with exit code 2 and no report is produced. Filters apply to updates
+and plans; `--list` and `--outdated` take no tool names and `--info` takes
+exactly one tool name. Operations that encounter failures exit non-zero (`1`):
+failed installs, failed outdated checks, and inventory issues; looking up an
+unknown tool with `--info` also exits `1`, while malformed invocations exit
+`2`. Machine-readable `--json` output carries the same success/failure
+contract as terminal output, including inventory health detail.
+
+Inventory counts reconcile: every discovered tool is Healthy, Local, or
+Unhealthy, with invalid binaries listed separately. `Skipped` means the same
+in plans and updates: selected but ineligible tools plus invalid binaries.
+Flags that an invocation discards print a `Warning:` to stderr without
+changing the outcome: `--check`/`--dry-run` with an explicit operation,
+`--verbose` with `--json`/`--quiet`, and shadowed output modes (`--json`
+wins over `--ci`, which wins over `--quiet`).
 
 There are no subcommands; all interactions are flag-driven operating modes.
 

@@ -65,6 +65,7 @@ func (r CIRenderer) Plan(report PlanReport) error {
 	}
 	fmt.Println()
 	fmt.Printf("would-update: %d\n", len(report.WouldUpdate))
+	fmt.Printf("skipped: %d\n", len(report.Skipped))
 	return nil
 }
 

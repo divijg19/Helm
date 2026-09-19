@@ -6,19 +6,34 @@
       "name": "hello",
       "version": "v1.0.0",
       "package_path": "example.com/hello",
-      "module_path": "example.com/hello"
+      "module_path": "example.com/hello",
+      "status": "Healthy"
     },
     {
       "name": "localdev",
       "version": "(devel)",
       "package_path": "example.com/localdev",
-      "module_path": "example.com/localdev"
+      "module_path": "example.com/localdev",
+      "status": "Local"
     },
     {
       "name": "world",
       "version": "v1.2.0",
       "package_path": "example.com/world",
-      "module_path": "example.com/world"
+      "module_path": "example.com/world",
+      "status": "Healthy"
     }
-  ]
+  ],
+  "invalid": [
+    {
+      "path": "<TMP>/gobin/notgo",
+      "message": "missing or unreadable build info"
+    }
+  ],
+  "summary": {
+    "healthy": 2,
+    "local": 1,
+    "invalid": 1,
+    "unhealthy": 1
+  }
 }

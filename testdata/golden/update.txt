@@ -19,6 +19,7 @@ Skipping local development binaries:
 
 Skipped
 
+  • localdev
   • <TMP>/gobin/notgo
 
 Installations
@@ -30,6 +31,6 @@ Summary
 
 Updated       1
 Up-to-date    1
-Skipped       1
+Skipped       2
 Failed        0
 Duration      0.0s

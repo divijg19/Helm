@@ -416,6 +416,40 @@ func TestUpdateJSON(t *testing.T) {
 	}
 }
 
+// TestDiscardedModifiersWarn documents that silently discarded flags now
+// warn on stderr without changing the operation outcome: plan flags with an
+// explicit operation, verbose with JSON or quiet output, and shadowed output
+// modes. A clean invocation stays silent on stderr.
+func TestDiscardedModifiersWarn(t *testing.T) {
+	f := testutil.NewFixture(t)
+
+	plan := runCLI(t, f.Env(), "--check", "--list")
+	if !strings.Contains(plan.stderr, "Warning: --check/--dry-run has no effect with --list.") {
+		t.Errorf("expected dropped-plan warning, got stderr:\n%s", plan.stderr)
+	}
+	if plan.code != 1 {
+		t.Errorf("--check --list must still run the list operation (exit 1 on fixture issues), got %d", plan.code)
+	}
+
+	verbose := runCLI(t, f.Env(), "--check", "--json", "--verbose")
+	if !strings.Contains(verbose.stderr, "Warning: --verbose has no effect with --json.") {
+		t.Errorf("expected dropped-verbose warning, got stderr:\n%s", verbose.stderr)
+	}
+	if verbose.code != 0 {
+		t.Errorf("--check --json --verbose must still plan cleanly, got exit %d", verbose.code)
+	}
+
+	modes := runCLI(t, f.Env(), "--json", "--ci")
+	if !strings.Contains(modes.stderr, "Warning: --ci ignored; --json takes precedence.") {
+		t.Errorf("expected mode-precedence warning, got stderr:\n%s", modes.stderr)
+	}
+
+	clean := runCLI(t, f.Env(), "--check")
+	if strings.TrimSpace(clean.stderr) != "" {
+		t.Errorf("clean invocation must stay silent on stderr, got:\n%s", clean.stderr)
+	}
+}
+
 func TestUnknownOption(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--unknown")
@@ -525,8 +559,44 @@ func TestUnknownToolFilterFailsFast(t *testing.T) {
 func TestInfoMissing(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info", "nonexistent")
+	if result.code != 1 {
+		t.Errorf("exit code: expected 1 (operational lookup failure), got %d", result.code)
+	}
+}
+
+func TestInfoNoName(t *testing.T) {
+	f := testutil.NewFixture(t)
+	result := runCLI(t, f.Env(), "--info")
 	if result.code != 2 {
-		t.Errorf("exit code: expected 2, got %d", result.code)
+		t.Errorf("exit code: expected 2 (usage error), got %d", result.code)
+	}
+}
+
+// TestExplicitOpsRejectPositionals pins the v1.9.5 filter-scope contract:
+// --list and --outdated accept no tool names, and --info accepts exactly
+// one. Extra positionals are usage errors with no report on stdout, so a
+// filtered update command can never be pasted onto an explicit operation
+// and silently widen scope.
+func TestExplicitOpsRejectPositionals(t *testing.T) {
+	f := testutil.NewFixture(t)
+	cases := [][]string{
+		{"--list", "hello"},
+		{"--list", "nosuchtool"},
+		{"--outdated", "hello"},
+		{"--outdated", "nosuchtool"},
+		{"--info", "hello", "extra"},
+	}
+	for _, args := range cases {
+		result := runCLI(t, f.Env(), args...)
+		if result.code != 2 {
+			t.Errorf("helm %v: expected exit 2, got %d", args, result.code)
+		}
+		if strings.TrimSpace(result.stdout) != "" {
+			t.Errorf("helm %v: expected empty stdout, got:\n%s", args, result.stdout)
+		}
+		if strings.TrimSpace(result.stderr) == "" {
+			t.Errorf("helm %v: expected stderr diagnostic, got none", args)
+		}
 	}
 }
 

@@ -26,7 +26,7 @@ Invalid / Uninspectable binaries
 
 Summary
 
-Healthy       3
+Healthy       2
 Local         1
 Invalid       1
 Unhealthy     1

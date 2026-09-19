@@ -3,12 +3,14 @@
 # canonical `helm` executable plus its aliases.
 #
 # Usage:
-#   curl -fsSL https://github.com/divijg19/helm/releases/latest/download/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/divijg19/helm/main/install.sh | sh
 #   VERSION=v1.7.2 sh install.sh
 #   INSTALL_DIR=/usr/local/bin sh install.sh
 #
-# The installer never executes downloaded content. Every artifact is verified
-# against the published SHA-256 checksums before extraction.
+# Downloaded content is never executed before verification: every artifact is
+# checked against the published SHA-256 checksums before extraction, and only
+# then does the installer run the extracted binary once for a version check.
+# Portable POSIX sh only; no bashisms.
 
 set -eu
 

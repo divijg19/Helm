@@ -1,8 +1,12 @@
 package app
 
 import (
+	"debug/buildinfo"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -32,6 +36,53 @@ func TestNewAppPropagatesGobinResolutionError(t *testing.T) {
 	}
 	if !errors.Is(err, tool.ErrGobinResolution) {
 		t.Fatalf("expected ErrGobinResolution, got %v", err)
+	}
+}
+
+// TestInventoryReport_ConservesTools pins the inventory conservation
+// invariant: every discovered tool lands in exactly one of Healthy, Local,
+// or Unhealthy, so the summary counts always reconcile with the tool list.
+func TestInventoryReport_ConservesTools(t *testing.T) {
+	dir := t.TempDir()
+	writeExec := func(name string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("dummy"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	updatable := &buildinfo.BuildInfo{
+		Path: "example.com/healthy/cmd/healthy",
+		Main: debug.Module{Path: "example.com/healthy", Version: "v1.0.0"},
+	}
+	local := &buildinfo.BuildInfo{
+		Path: "example.com/local",
+		Main: debug.Module{Path: "example.com/local", Version: "(devel)"},
+	}
+	tools := []tool.Tool{
+		tool.NewTool("healthy", writeExec("healthy"), updatable),
+		tool.NewTool("local", writeExec("local"), local),
+		tool.NewTool("missing", filepath.Join(dir, "missing"), updatable),
+	}
+
+	report := (&App{}).inventoryReport(tool.LoadResult{Tools: tools})
+
+	if report.Summary.Healthy != 1 || report.Summary.Local != 1 || report.Summary.Unhealthy != 1 {
+		t.Errorf("summary = %+v, want {Healthy:1 Local:1 Unhealthy:1}", report.Summary)
+	}
+	if total := report.Summary.Healthy + report.Summary.Local + report.Summary.Unhealthy; total != len(tools) {
+		t.Errorf("summary total = %d, want %d (one bucket per tool)", total, len(tools))
+	}
+	got := map[string]string{}
+	for _, item := range report.Tools {
+		got[item.Name] = item.Status
+	}
+	want := map[string]string{"healthy": "Healthy", "local": "Local", "missing": "Unhealthy"}
+	for name, status := range want {
+		if got[name] != status {
+			t.Errorf("tool %s status = %q, want %q", name, got[name], status)
+		}
 	}
 }
 

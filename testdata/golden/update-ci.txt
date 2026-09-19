@@ -7,9 +7,10 @@ invalid: 1
 
 updated: world
 up-to-date: hello
+skipped: localdev
 skipped: <TMP>/gobin/notgo
 
 updated-count: 1
 up-to-date-count: 1
-skipped-count: 1
+skipped-count: 2
 failed-count: 0
