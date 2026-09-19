@@ -10,7 +10,7 @@
 # The installer never executes downloaded content. Every artifact is verified
 # against the published SHA-256 checksums before extraction.
 
-set -euo pipefail
+set -eu
 
 REPO="divijg19/helm"
 BINARY="helm"

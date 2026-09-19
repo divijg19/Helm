@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"debug/buildinfo"
+	"encoding/json"
 	"flag"
 	"os"
 	"os/exec"
@@ -423,6 +424,104 @@ func TestUnknownOption(t *testing.T) {
 	}
 }
 
+// offlineEnv returns the fixture environment with upstream module resolution
+// disabled, so `go list -m` deterministically fails for every tool. Proxy and
+// sum-database variables are removed rather than appended so no earlier entry
+// can take precedence; GOBIN is preserved.
+func offlineEnv(t *testing.T, fixtureEnv []string) []string {
+	t.Helper()
+	var env []string
+	for _, kv := range append(append([]string{}, os.Environ()...), fixtureEnv...) {
+		if strings.HasPrefix(kv, "GOPROXY=") || strings.HasPrefix(kv, "GOSUMDB=") ||
+			strings.HasPrefix(kv, "GONOSUMDB=") || strings.HasPrefix(kv, "GONOSUMCHECK=") ||
+			strings.HasPrefix(kv, "GOFLAGS=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "GOPROXY=off")
+}
+
+// TestOutdatedResolutionFailureExitsNonZero pins the H2 contract end to end:
+// when upstream resolution fails, tools are reported as failed (never
+// up-to-date), the summary reconciles, and the operation exits non-zero.
+func TestOutdatedResolutionFailureExitsNonZero(t *testing.T) {
+	f := testutil.NewFixture(t)
+	result := runBinary(t, binaryPath, offlineEnv(t, f.Env()), "--outdated")
+	if result.code == 0 {
+		t.Errorf("exit code: expected non-zero for failed resolution, got 0\nstdout:\n%s", result.stdout)
+	}
+	got := normalizeOutput(t, f.GobinDir, result.stdout)
+	for _, want := range []string{"Failed        2", "Up-to-date    0", "Outdated      0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in outdated failure output:\n%s", want, got)
+		}
+	}
+}
+
+// TestUpdateResolutionFailureJSONExitsNonZero pins the H1 contract end to
+// end: a failed update must exit non-zero under --json while stdout stays a
+// complete, valid JSON document reporting success false and the failed tools.
+func TestUpdateResolutionFailureJSONExitsNonZero(t *testing.T) {
+	f := testutil.NewFixture(t)
+	result := runBinary(t, binaryPath, offlineEnv(t, f.Env()), "--json")
+	if result.code == 0 {
+		t.Errorf("exit code: expected non-zero for failed update, got 0\nstdout:\n%s", result.stdout)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(result.stdout), &doc); err != nil {
+		t.Fatalf("stdout must stay valid JSON on failure, got error %v:\n%s", err, result.stdout)
+	}
+	if doc["success"] != false {
+		t.Errorf("JSON success = %v, want false:\n%s", doc["success"], result.stdout)
+	}
+	failed, _ := doc["failed"].([]any)
+	if len(failed) != 2 {
+		t.Errorf("JSON failed = %v, want both tools listed:\n%s", doc["failed"], result.stdout)
+	}
+}
+
+// TestForeignCompletionInvocationFailsSafely is the regression test for the
+// Fish/Kubernetes-Helm completion collision: a foreign shell integration may
+// invoke `helm completion fish`, whose words must never become an update
+// filter. The invocation must fail with a stderr diagnostic, emit no normal
+// report on stdout, perform no installs, and leave installed versions alone.
+func TestForeignCompletionInvocationFailsSafely(t *testing.T) {
+	f := testutil.NewFixture(t)
+	result := runCLI(t, f.Env(), "completion", "fish")
+	if result.code == 0 {
+		t.Errorf("exit code: expected non-zero for unknown tool names, got 0\nstdout:\n%s", result.stdout)
+	}
+	if strings.TrimSpace(result.stdout) != "" {
+		t.Errorf("stdout must carry no report for a foreign invocation, got:\n%s", result.stdout)
+	}
+	if !strings.Contains(result.stderr, "Unknown tool") {
+		t.Errorf("stderr must name the unknown tools, got:\n%s", result.stderr)
+	}
+	if got := installedVersion(t, f.Gobin("world")); got != "v1.2.0" {
+		t.Errorf("world version = %q, want v1.2.0 (no install must run for unknown names)", got)
+	}
+	if got := installedVersion(t, f.Gobin("hello")); got != "v1.0.0" {
+		t.Errorf("hello version = %q, want v1.0.0 (no install must run for unknown names)", got)
+	}
+}
+
+// TestUnknownToolFilterFailsFast proves the general contract behind the
+// collision fix: any unmatched filter name is rejected, whether alone or
+// mixed with valid names, while valid filters keep working.
+func TestUnknownToolFilterFailsFast(t *testing.T) {
+	f := testutil.NewFixture(t)
+	for _, args := range [][]string{{"nosuchtool"}, {"hello", "nosuchtool"}} {
+		result := runCLI(t, f.Env(), args...)
+		if result.code == 0 {
+			t.Errorf("helm %v: expected non-zero exit, got 0", args)
+		}
+		if strings.TrimSpace(result.stdout) != "" {
+			t.Errorf("helm %v: expected empty stdout, got:\n%s", args, result.stdout)
+		}
+	}
+}
+
 func TestInfoMissing(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info", "nonexistent")
@@ -452,5 +551,23 @@ func TestAliasUpperCaseHelmMatchesHelm(t *testing.T) {
 	}
 	if helm.stdout != upper.stdout {
 		t.Errorf("Helm alias must produce identical --version output to helm:\nhelm:\n%s\nHelm:\n%s", helm.stdout, upper.stdout)
+	}
+}
+
+// TestAliasUpdateExecutesSameProduct pins the secondary-alias contract: the
+// update-go-tools invocation executes the same product as helm, producing
+// identical update output and exit behavior on identical starting fixtures.
+func TestAliasUpdateExecutesSameProduct(t *testing.T) {
+	fHelm := testutil.NewFixture(t)
+	fAlias := testutil.NewFixture(t)
+	helmRes := runCLI(t, fHelm.Env())
+	aliasRes := runBinary(t, compatBinaryPath, fAlias.Env())
+	if helmRes.code != aliasRes.code {
+		t.Errorf("exit code mismatch: helm=%d update-go-tools=%d", helmRes.code, aliasRes.code)
+	}
+	gotHelm := normalizeOutput(t, fHelm.GobinDir, helmRes.stdout)
+	gotAlias := normalizeOutput(t, fAlias.GobinDir, aliasRes.stdout)
+	if gotHelm != gotAlias {
+		t.Errorf("update-go-tools must produce identical update output to helm:\nhelm:\n%s\nupdate-go-tools:\n%s", gotHelm, gotAlias)
 	}
 }

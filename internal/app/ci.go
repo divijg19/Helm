@@ -83,6 +83,10 @@ func (r CIRenderer) Outdated(report OutdatedReport) error {
 	fmt.Printf("checked: %d\n", len(report.Results))
 	fmt.Printf("outdated: %d\n", report.Summary.Outdated)
 	fmt.Printf("up-to-date: %d\n", report.Summary.UpToDate)
+	fmt.Printf("failed: %d\n", report.Summary.Failed)
+	if report.Summary.Failed > 0 {
+		return fmt.Errorf("%d outdated checks failed", report.Summary.Failed)
+	}
 	return nil
 }
 

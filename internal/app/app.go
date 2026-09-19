@@ -138,15 +138,21 @@ func (a *App) outdatedReport(outdatedRes []tool.OutdatedResult) OutdatedReport {
 	outReports := make([]OutdatedItemReport, 0, len(outdatedRes))
 	outdatedCount := 0
 	upToDateCount := 0
+	failedCount := 0
 
 	for _, o := range outdatedRes {
 		errStr := ""
 		if o.Error != nil {
 			errStr = o.Error.Error()
 		}
-		if o.Outdated {
+		// Resolution failures are their own category: a tool whose update
+		// state could not be determined is neither outdated nor up-to-date.
+		switch {
+		case o.Error != nil:
+			failedCount++
+		case o.Outdated:
 			outdatedCount++
-		} else {
+		default:
 			upToDateCount++
 		}
 		outReports = append(outReports, OutdatedItemReport{
@@ -161,12 +167,13 @@ func (a *App) outdatedReport(outdatedRes []tool.OutdatedResult) OutdatedReport {
 	return OutdatedReport{
 		OperationEnvelope: OperationEnvelope{
 			Operation: OperationOutdated,
-			Success:   true,
+			Success:   failedCount == 0,
 		},
 		Results: outReports,
 		Summary: OutdatedSummary{
 			Outdated: outdatedCount,
 			UpToDate: upToDateCount,
+			Failed:   failedCount,
 		},
 	}
 }

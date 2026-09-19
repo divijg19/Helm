@@ -202,7 +202,11 @@ func (r TerminalRenderer) Outdated(report OutdatedReport) error {
 		{"Checked", itoa(len(report.Results))},
 		{"Outdated", itoa(report.Summary.Outdated)},
 		{"Up-to-date", itoa(report.Summary.UpToDate)},
+		{"Failed", itoa(report.Summary.Failed)},
 	})
+	if report.Summary.Failed > 0 {
+		return fmt.Errorf("%d outdated checks failed", report.Summary.Failed)
+	}
 	return nil
 }
 

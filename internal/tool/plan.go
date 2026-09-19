@@ -62,3 +62,25 @@ func nameSet(names []string) map[string]bool {
 func selected(name string, set map[string]bool) bool {
 	return len(set) == 0 || set[name]
 }
+
+// UnknownFilterNames returns the filter names that match no known tool, in
+// first-seen order without duplicates. An empty filter selects everything and
+// yields no unknown names. Callers use this to reject misspelled or foreign
+// invocations (for example, another program's shell completion calling Helm
+// with unexpected words) instead of running a silently empty operation.
+func UnknownFilterNames(tools []Tool, filter []string) []string {
+	known := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		known[t.Name()] = true
+	}
+	var unknown []string
+	seen := make(map[string]bool, len(filter))
+	for _, n := range filter {
+		if known[n] || seen[n] {
+			continue
+		}
+		seen[n] = true
+		unknown = append(unknown, n)
+	}
+	return unknown
+}
