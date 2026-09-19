@@ -89,6 +89,31 @@ func TestJSONRenderer_SkippedNotInFailed(t *testing.T) {
 	}
 }
 
+// TestJSONRenderer_UpdateFailureExitsNonZero pins the H1 invariant: a failed
+// update must produce a non-zero process result from every renderer. The JSON
+// document on stdout stays complete and valid; only the returned error (which
+// the CLI maps to a non-zero exit) signals failure.
+func TestJSONRenderer_UpdateFailureExitsNonZero(t *testing.T) {
+	r := JSONRenderer{}
+	report := UpdateReport{
+		OperationEnvelope: OperationEnvelope{Operation: OperationUpdate, Success: false},
+		Updated:           []string{"hello"},
+		Failed:            []string{"world"},
+	}
+
+	out, err := captureOutput(t, func() error {
+		return r.Update(report)
+	})
+	if err == nil {
+		t.Fatalf("expected error for failed update, got nil with output:\n%s", out)
+	}
+	for _, want := range []string{`"operation": "update"`, `"success": false`, `"failed": [`, `"world"`, `"updated": [`} {
+		if !bytes.Contains([]byte(out), []byte(want)) {
+			t.Errorf("expected %s in failed-update JSON:\n%s", want, out)
+		}
+	}
+}
+
 func TestJSONRenderer_InventoryReportsIssues(t *testing.T) {
 	r := JSONRenderer{}
 	report := InventoryReport{

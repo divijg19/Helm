@@ -137,6 +137,7 @@ type OutdatedItemReport struct {
 type OutdatedSummary struct {
 	Outdated int `json:"outdated"`
 	UpToDate int `json:"up_to_date"`
+	Failed   int `json:"failed"`
 }
 
 type UpdatedToolDetail struct {

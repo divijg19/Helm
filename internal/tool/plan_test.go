@@ -2,6 +2,7 @@ package tool
 
 import (
 	"debug/buildinfo"
+	"reflect"
 	"runtime/debug"
 	"testing"
 )
@@ -96,5 +97,37 @@ func TestInstallCommandAgreesWithUpdate(t *testing.T) {
 	target := "example.com/hello"
 	if got := InstallCommand(target); got != "go install "+InstallRef(target) {
 		t.Errorf("command %q does not wrap ref %q", got, InstallRef(target))
+	}
+}
+
+// TestUnknownFilterNames pins filter validation: every supplied name must
+// match a known tool. Unknown names are reported in first-seen order without
+// duplicates; an empty filter and fully known filters report nothing.
+func TestUnknownFilterNames(t *testing.T) {
+	tools := []Tool{
+		planTool("hello", false),
+		planTool("world", false),
+		planTool("localdev", true),
+	}
+	tests := []struct {
+		name   string
+		filter []string
+		want   []string
+	}{
+		{"empty filter", nil, nil},
+		{"single known", []string{"hello"}, nil},
+		{"multiple known", []string{"hello", "world"}, nil},
+		{"known local tool", []string{"localdev"}, nil},
+		{"single unknown", []string{"nope"}, []string{"nope"}},
+		{"foreign completion words", []string{"completion", "fish"}, []string{"completion", "fish"}},
+		{"mixed known and unknown", []string{"hello", "nope", "world"}, []string{"nope"}},
+		{"duplicates reported once", []string{"nope", "hello", "nope"}, []string{"nope"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UnknownFilterNames(tools, tt.filter); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("UnknownFilterNames(%v) = %v, want %v", tt.filter, got, tt.want)
+			}
+		})
 	}
 }

@@ -137,6 +137,43 @@ func TestUpdateReport_PreservesDuration(t *testing.T) {
 	}
 }
 
+// TestOutdatedReport_ResolutionFailuresAreNotUpToDate pins the H2 invariant:
+// a tool whose update state could not be determined is neither outdated nor
+// up-to-date. Failures occupy their own counter, flip operation success, and
+// never inflate the up-to-date count.
+func TestOutdatedReport_ResolutionFailuresAreNotUpToDate(t *testing.T) {
+	current := makeTool("hello", "example.com/hello", "v1.0.0")
+	outdated := makeTool("world", "example.com/world", "v1.2.0")
+	broken := makeTool("broken", "example.com/broken", "v1.0.0")
+
+	results := []tool.OutdatedResult{
+		{Tool: current, Current: "v1.0.0", Latest: "v1.0.0", Outdated: false},
+		{Tool: outdated, Current: "v1.2.0", Latest: "v1.3.0", Outdated: true},
+		{Tool: broken, Current: "v1.0.0", Error: errors.New("simulated resolution failure")},
+	}
+
+	report := (&App{}).outdatedReport(results)
+
+	if report.Summary.Outdated != 1 || report.Summary.UpToDate != 1 || report.Summary.Failed != 1 {
+		t.Errorf("summary = %+v, want {Outdated:1 UpToDate:1 Failed:1}", report.Summary)
+	}
+	if report.Success {
+		t.Error("report must be unsuccessful while any resolution failed")
+	}
+	if got := report.Results[2].Error; got == "" {
+		t.Error("failed result must carry its error message")
+	}
+
+	clean := (&App{}).outdatedReport(results[:2])
+	if clean.Summary.Failed != 0 || !clean.Success {
+		t.Errorf("clean report = %+v, want Failed:0 and success", clean.Summary)
+	}
+	empty := (&App{}).outdatedReport(nil)
+	if empty.Summary != (OutdatedSummary{}) || !empty.Success {
+		t.Errorf("empty report = %+v, want zero summary and success", empty)
+	}
+}
+
 // TestUpdateReport_DuplicateResultsKeepFirstMatch pins the legacy first-match
 // behavior for duplicated tool names: candidate matching must use the first
 // result with a given name, exactly as the pre-v1.9.2 linear scan did.

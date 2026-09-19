@@ -24,3 +24,4 @@ Summary
 Checked       2
 Outdated      1
 Up-to-date    1
+Failed        0

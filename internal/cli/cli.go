@@ -106,6 +106,19 @@ func Run(inv Invocation, args []string) int {
 	if err != nil {
 		return fail("Error loading tools:", err)
 	}
+
+	// The default update and plan paths filter by tool name. Reject unknown
+	// names before rendering anything: a foreign or misspelled invocation
+	// (for example, another program's shell completion calling Helm with
+	// unexpected words) must fail with a diagnostic on stderr and no report
+	// on stdout, never run as a silently empty successful operation.
+	if operation == "" {
+		if unknown := tool.UnknownFilterNames(loadRes.Tools, toolArgs); len(unknown) > 0 {
+			fmt.Fprintf(os.Stderr, "Error: Unknown tool(s): %s. Run 'helm --list' to see known tools.\n", strings.Join(unknown, ", "))
+			return ExitUsage
+		}
+	}
+
 	renderHeader(ctx, application, renderer, loadRes, mode)
 
 	switch operation {

@@ -42,6 +42,12 @@ and installs only the ones proven outdated, each at the exact version it just
 evaluated. Tools that are already current are reported as up-to-date and left
 untouched; tools whose update state cannot be determined are never installed.
 
+Tool names passed as filters must match installed tools: unknown names are
+rejected with exit code 2 and no report is produced. Operations that encounter
+failures exit non-zero (`1`): failed installs, failed outdated checks, and
+inventory issues. Machine-readable `--json` output carries the same
+success/failure contract as terminal output.
+
 There are no subcommands; all interactions are flag-driven operating modes.
 
 ## Aliases

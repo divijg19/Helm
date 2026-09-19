@@ -51,14 +51,31 @@ func (JSONRenderer) Outdated(report OutdatedReport) error {
 			Error:    o.Error,
 		})
 	}
-	return emitJSON(OutdatedReport{
+	if err := emitJSON(OutdatedReport{
 		OperationEnvelope: report.OperationEnvelope,
 		Results:           outReports,
-	})
+	}); err != nil {
+		return err
+	}
+	// Process success agrees with resolution failures exactly like the human
+	// renderers, while the JSON document on stdout stays complete.
+	if report.Summary.Failed > 0 {
+		return fmt.Errorf("%d outdated checks failed", report.Summary.Failed)
+	}
+	return nil
 }
 
 func (JSONRenderer) Update(report UpdateReport) error {
-	return emitJSON(report)
+	if err := emitJSON(report); err != nil {
+		return err
+	}
+	// Process success must agree with the operation failure state regardless
+	// of renderer: a failed update exits non-zero exactly like the human
+	// renderers, while the JSON document on stdout stays complete.
+	if len(report.Failed) > 0 {
+		return fmt.Errorf("%d updates failed", len(report.Failed))
+	}
+	return nil
 }
 
 func (JSONRenderer) Info(loadRes tool.LoadResult, target string) error {
