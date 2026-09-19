@@ -15,19 +15,10 @@ type JSONRenderer struct{}
 func (JSONRenderer) Header(HeaderInfo) error { return nil }
 
 func (JSONRenderer) Inventory(report InventoryReport) error {
-	toolsRep := make([]ToolReport, 0, len(report.Tools))
-	for _, t := range report.Tools {
-		toolsRep = append(toolsRep, ToolReport{
-			Name:        t.Name,
-			Version:     t.Version,
-			PackagePath: t.PackagePath,
-			ModulePath:  t.ModulePath,
-		})
-	}
-	if err := emitJSON(ListReport{
-		OperationEnvelope: report.OperationEnvelope,
-		Tools:             toolsRep,
-	}); err != nil {
+	// Emit the full inventory model, not the bare tool list: machine
+	// consumers need the same status, invalid-binary, and summary detail
+	// the human renderers show to reconcile a failed inventory.
+	if err := emitJSON(report); err != nil {
 		return err
 	}
 	if report.Summary.Unhealthy > 0 || report.Summary.Invalid > 0 {

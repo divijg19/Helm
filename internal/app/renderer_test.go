@@ -339,6 +339,9 @@ func TestCIRenderer_DeterministicPlan(t *testing.T) {
 	if strings.Contains(out, "would-update: 0") {
 		t.Errorf("expected would-update count to reflect plan:\n%s", out)
 	}
+	if !strings.Contains(out, "skipped: 0") {
+		t.Errorf("expected skipped count alongside would-update count:\n%s", out)
+	}
 }
 
 func TestTerminalRenderer_UpdateSkippedIndented(t *testing.T) {

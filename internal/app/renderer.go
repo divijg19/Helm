@@ -80,11 +80,6 @@ type OperationEnvelope struct {
 	Success   bool   `json:"success"`
 }
 
-type ListReport struct {
-	OperationEnvelope
-	Tools []ToolReport `json:"tools"`
-}
-
 type InventoryReport struct {
 	OperationEnvelope
 	Tools   []ToolInventoryItem `json:"tools"`

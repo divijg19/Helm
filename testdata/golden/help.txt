@@ -30,3 +30,8 @@ Utility:
 
 Without arguments, updates all discovered Go tools.
 With one or more tool names, updates only those specified tools.
+Unknown tool names are rejected; --list and --outdated take no tool names
+and --info takes exactly one.
+When several output modes are given, --json wins over --ci, which wins
+over --quiet. Flags with no effect print a Warning to stderr.
+Exit codes: 0 success, 1 operation failure, 2 usage error, 3 environment error.

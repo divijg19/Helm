@@ -27,11 +27,14 @@ type UpdateCandidate struct {
 
 // CandidateSet partitions selected, updatable tools by fresh outdated
 // resolution. Failed carries resolution errors, which veto installation;
-// those tools must remain visible but must never be installed.
+// those tools must remain visible but must never be installed. Skipped
+// carries selected tools that cannot be updated (local/development
+// builds); they are reported as skipped, mirroring the plan operation.
 type CandidateSet struct {
 	Candidates []UpdateCandidate
 	UpToDate   []Tool
 	Failed     []OutdatedResult
+	Skipped    []Tool
 }
 
 // isUpdateCandidate is the explicit domain predicate authorizing mutation:
@@ -50,17 +53,18 @@ func ResolveUpdateCandidates(ctx context.Context, tools []Tool, filter []string,
 	set := nameSet(filter)
 
 	eligible := make([]Tool, 0, len(tools))
+	var out CandidateSet
 	for _, t := range tools {
 		if !selected(t.Name(), set) {
 			continue
 		}
 		if !t.CanUpdate() {
+			out.Skipped = append(out.Skipped, t)
 			continue
 		}
 		eligible = append(eligible, t)
 	}
 
-	var out CandidateSet
 	for _, r := range CheckOutdated(ctx, eligible, runner) {
 		switch {
 		case r.Error != nil:

@@ -76,9 +76,12 @@ func (a *App) inventoryReport(loadRes tool.LoadResult) InventoryReport {
 			errStr = vr.Error
 			unhealthy++
 		} else if !t.CanUpdate() {
+			// Local tools are their own category: they are neither
+			// healthy-updatable nor unhealthy, so they must not inflate
+			// either count. Conservation: len(Tools) ==
+			// Healthy + Local + Unhealthy.
 			status = "Local"
 			localCount++
-			healthy++
 		} else {
 			healthy++
 		}
@@ -315,7 +318,12 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 		})
 	}
 
-	skipped := make([]string, 0, len(loadRes.Invalid))
+	// Skipped mirrors the plan operation: selected but ineligible (local)
+	// tools first, then invalid binaries, which are always reported.
+	skipped := make([]string, 0, len(set.Skipped)+len(loadRes.Invalid))
+	for _, t := range set.Skipped {
+		skipped = append(skipped, t.Name())
+	}
 	for _, inv := range loadRes.Invalid {
 		skipped = append(skipped, inv.Path)
 	}

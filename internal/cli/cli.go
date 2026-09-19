@@ -99,6 +99,8 @@ func Run(inv Invocation, args []string) int {
 		return ExitSuccess
 	}
 
+	warnUnusedModifiers(opts, operation, mode)
+
 	// Every remaining operation loads the tool set once and renders the
 	// discovery header before dispatch. Both the explicit-operation path and
 	// the default update/plan path share this setup.
@@ -119,6 +121,21 @@ func Run(inv Invocation, args []string) int {
 		}
 	}
 
+	// Explicit operations that accept no filters reject any positional
+	// outright: silently ignoring them would widen scope beyond what the
+	// user expressed (for example, copying a filtered update command onto
+	// --outdated or --list). --info consumes exactly one target.
+	if operation == "--list" || operation == "--outdated" {
+		if len(toolArgs) > 0 {
+			fmt.Fprintf(os.Stderr, "Error: Option %s takes no tool names.\n", operation)
+			return ExitUsage
+		}
+	}
+	if operation == "--info" && len(toolArgs) > 1 {
+		fmt.Fprintln(os.Stderr, "Error: Option --info takes exactly one tool name.")
+		return ExitUsage
+	}
+
 	renderHeader(ctx, application, renderer, loadRes, mode)
 
 	switch operation {
@@ -135,9 +152,11 @@ func Run(inv Invocation, args []string) int {
 			fmt.Fprintln(os.Stderr, "Error: Option --info requires a tool name.")
 			return ExitUsage
 		}
+		// An unknown tool name is an operational lookup failure, not a
+		// usage error: the invocation syntax is valid but the target does
+		// not resolve to a known tool.
 		if err := application.RunInfo(toolArgs[0]); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			return ExitUsage
+			return fail("Error:", err)
 		}
 	}
 
@@ -196,6 +215,35 @@ func splitOperation(positional []string) (string, []string) {
 		return positional[0], positional[1:]
 	}
 	return "", positional
+}
+
+// warnUnusedModifiers tells the user about flags the requested invocation
+// silently discards, instead of pretending they applied. Warnings never
+// change the exit status; the operation proceeds as documented.
+func warnUnusedModifiers(opts cliOptions, operation string, mode app.RenderMode) {
+	if opts.plan && operation != "" {
+		fmt.Fprintf(os.Stderr, "Warning: --check/--dry-run has no effect with %s.\n", operation)
+	}
+	if opts.verbose && mode == app.ModeJSON {
+		fmt.Fprintln(os.Stderr, "Warning: --verbose has no effect with --json.")
+	}
+	if opts.verbose && mode == app.ModeQuiet {
+		fmt.Fprintln(os.Stderr, "Warning: --verbose has no effect with --quiet.")
+	}
+	set := make([]string, 0, 3)
+	if opts.jsonOutput {
+		set = append(set, "--json")
+	}
+	if opts.ci {
+		set = append(set, "--ci")
+	}
+	if opts.quiet {
+		set = append(set, "--quiet")
+	}
+	// Output modes resolve by precedence json > ci > quiet; name the losers.
+	if len(set) > 1 {
+		fmt.Fprintf(os.Stderr, "Warning: %s ignored; %s takes precedence.\n", strings.Join(set[1:], " and "), set[0])
+	}
 }
 
 func renderHeader(ctx context.Context, application *app.App, renderer app.Renderer, loadRes tool.LoadResult, mode app.RenderMode) {
@@ -268,5 +316,10 @@ Utility:
 
 Without arguments, updates all discovered Go tools.
 With one or more tool names, updates only those specified tools.
+Unknown tool names are rejected; --list and --outdated take no tool names
+and --info takes exactly one.
+When several output modes are given, --json wins over --ci, which wins
+over --quiet. Flags with no effect print a Warning to stderr.
+Exit codes: 0 success, 1 operation failure, 2 usage error, 3 environment error.
 `, version)
 }

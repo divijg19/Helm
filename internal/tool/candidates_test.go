@@ -315,6 +315,33 @@ func TestUpdateCandidates_ExactVersionNoFallback(t *testing.T) {
 	}
 }
 
+// TestResolveCandidates_SkippedLocals pins Skipped semantics shared with the
+// plan operation: selected tools that cannot update land in Skipped while
+// updatable tools partition into candidates, up-to-date, or failures
+// unaffected. Unselected tools appear in no bucket.
+func TestResolveCandidates_SkippedLocals(t *testing.T) {
+	runner := &moduleRunner{versions: candidateVersions()}
+	tools := append(candidateTools(), makeOutdatedTool("localdev", "example.com/localdev", "(devel)"))
+
+	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)
+	if !equalNames(set.Skipped, "localdev") {
+		t.Errorf("expected skipped [localdev], got %v", candidateNames(set.Skipped))
+	}
+	var candidateNamesGot []string
+	for _, c := range set.Candidates {
+		candidateNamesGot = append(candidateNamesGot, c.Tool.Name())
+	}
+	if len(set.Candidates) != 1 || len(set.UpToDate) != 1 || len(set.Failed) != 0 {
+		t.Errorf("other buckets disturbed: candidates=%v up-to-date=%v failed=%v",
+			candidateNamesGot, candidateNames(set.UpToDate), set.Failed)
+	}
+
+	filtered := ResolveUpdateCandidates(context.Background(), tools, []string{"world"}, runner)
+	if len(filtered.Skipped) != 0 {
+		t.Errorf("unselected local must appear in no bucket, got skipped=%v", candidateNames(filtered.Skipped))
+	}
+}
+
 // TestInstallExactRef pins the exact-reference construction shared by the
 // update phase; InstallRef (floating @latest) intentionally remains the
 // --check/--dry-run display rule (see plan_test.go).
