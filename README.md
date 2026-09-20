@@ -14,6 +14,17 @@ curl -fsSL https://raw.githubusercontent.com/divijg19/helm/main/install.sh | sh
 
 The installer verifies the downloaded artifact against published SHA-256 checksums before installing `helm` to `~/.local/bin` (override with `INSTALL_DIR`).
 
+Windows (amd64) artifacts are published with each release but have no
+installer support: download the `helm_<version>_windows_amd64.zip` archive
+from the release page, verify it against `checksums.txt`, and place `helm`
+on your `PATH` manually.
+
+To uninstall, remove the binary and its aliases:
+
+```bash
+rm ~/.local/bin/helm ~/.local/bin/Helm ~/.local/bin/update-go-tools
+```
+
 Build from source:
 
 ```bash

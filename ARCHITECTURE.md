@@ -104,3 +104,9 @@ quiet, and CI renderers implement presentation without owning business rules.
 
 JSON is available for every operation. Its stable operation names are `list`,
 `check`, `update`, and `outdated`.
+
+Machine consumers should note what JSON omits by design: the outdated
+summary and the update-only `UpdatedDetail`, `Diagnostics`, and `Duration`
+fields are excluded from serialization, so outdated counts must be derived
+from the result arrays and `success` flags rather than expected as JSON keys.
+Inventory reports serialize in full, including per-tool status and summary.

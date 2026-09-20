@@ -1,0 +1,1 @@
+Error: Unknown tool(s): completion, fish. Run 'helm --list' to see known tools.
