@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/divijg19/helm/main/install.sh | sh
-#   VERSION=v1.7.2 sh install.sh
+#   VERSION=v1.9.5 sh install.sh
 #   INSTALL_DIR=/usr/local/bin sh install.sh
 #
 # Downloaded content is never executed before verification: every artifact is

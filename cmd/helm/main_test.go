@@ -25,6 +25,9 @@ var (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	if *updateFlag {
+		assertCleanTree()
+	}
 	tmp, err := os.MkdirTemp("", "helm-cli-test-*")
 	if err != nil {
 		panic(err)
@@ -100,13 +103,16 @@ func copyFile(src, dst string) error {
 
 var (
 	goVersionRe = regexp.MustCompile(`go1\.\d+(\.\d+)?(-[A-Za-z0-9:\.]+)?`)
-	durationRe  = regexp.MustCompile(`\d+\.\d+s`)
+	// durationRe masks only the summary Duration line (label width 14, so
+	// "Duration" plus six spaces). A broad N.Ns pattern would also mask
+	// version-like or path substrings elsewhere and hide real drift.
+	durationRe = regexp.MustCompile(`(?m)^Duration\s+\d+\.\d+s`)
 )
 
 func normalizeOutput(t *testing.T, gobinDir, s string) string {
 	t.Helper()
 	s = goVersionRe.ReplaceAllString(s, "goVERSION")
-	s = durationRe.ReplaceAllString(s, "0.0s")
+	s = durationRe.ReplaceAllString(s, "Duration      0.0s")
 	parent := filepath.Dir(gobinDir)
 	escaped := regexp.QuoteMeta(parent)
 	s = regexp.MustCompile(escaped).ReplaceAllString(s, "<TMP>")
@@ -116,15 +122,19 @@ func normalizeOutput(t *testing.T, gobinDir, s string) string {
 func checkGolden(t *testing.T, gobinDir, name string, got, gotErr string, goldenPath, goldenErrPath string) {
 	t.Helper()
 	if *updateFlag {
-		writeGolden(t, goldenPath, got)
+		if goldenPath != "" {
+			writeGolden(t, goldenPath, got)
+		}
 		if goldenErrPath != "" {
 			writeGolden(t, goldenErrPath, gotErr)
 		}
 		return
 	}
-	golden := readGolden(t, goldenPath)
-	if got != golden {
-		t.Errorf("stdout mismatch:\ngot:\n%s\nwant:\n%s", got, golden)
+	if goldenPath != "" {
+		golden := readGolden(t, goldenPath)
+		if got != golden {
+			t.Errorf("stdout mismatch:\ngot:\n%s\nwant:\n%s", got, golden)
+		}
 	}
 	if goldenErrPath != "" {
 		goldenErr := readGolden(t, goldenErrPath)
@@ -136,6 +146,20 @@ func checkGolden(t *testing.T, gobinDir, name string, got, gotErr string, golden
 
 func goldenPath(name string) string {
 	return filepath.Join("..", "..", "testdata", "golden", name+".txt")
+}
+
+// assertCleanTree refuses golden rewrites on a dirty worktree, so `-update`
+// can never launder a behavior regression into the expected files alongside
+// unrelated local changes. If git is unavailable the check is skipped rather
+// than blocking the rewrite.
+func assertCleanTree() {
+	out, err := exec.Command("git", "status", "--porcelain").Output()
+	if err != nil {
+		return
+	}
+	if len(bytes.TrimSpace(out)) > 0 {
+		panic("-update refused: worktree has uncommitted changes; commit or stash them before rewriting goldens")
+	}
 }
 
 func jsonGoldenPath(name string) string {
@@ -453,6 +477,7 @@ func TestDiscardedModifiersWarn(t *testing.T) {
 func TestUnknownOption(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--unknown")
+	checkGolden(t, f.GobinDir, "unknown-option", "", strings.TrimSpace(result.stderr), "", goldenPath("unknown-option-stderr"))
 	if result.code != 2 {
 		t.Errorf("exit code: expected 2, got %d", result.code)
 	}
@@ -523,6 +548,7 @@ func TestUpdateResolutionFailureJSONExitsNonZero(t *testing.T) {
 func TestForeignCompletionInvocationFailsSafely(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "completion", "fish")
+	checkGolden(t, f.GobinDir, "unknown-tool", "", strings.TrimSpace(result.stderr), "", goldenPath("unknown-tool-stderr"))
 	if result.code == 0 {
 		t.Errorf("exit code: expected non-zero for unknown tool names, got 0\nstdout:\n%s", result.stdout)
 	}
@@ -559,6 +585,7 @@ func TestUnknownToolFilterFailsFast(t *testing.T) {
 func TestInfoMissing(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info", "nonexistent")
+	checkGolden(t, f.GobinDir, "info-missing", "", strings.TrimSpace(result.stderr), "", goldenPath("info-missing-stderr"))
 	if result.code != 1 {
 		t.Errorf("exit code: expected 1 (operational lookup failure), got %d", result.code)
 	}
@@ -567,6 +594,7 @@ func TestInfoMissing(t *testing.T) {
 func TestInfoNoName(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info")
+	checkGolden(t, f.GobinDir, "info-noname", "", strings.TrimSpace(result.stderr), "", goldenPath("info-noname-stderr"))
 	if result.code != 2 {
 		t.Errorf("exit code: expected 2 (usage error), got %d", result.code)
 	}

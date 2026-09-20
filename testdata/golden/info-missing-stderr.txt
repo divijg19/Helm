@@ -1,0 +1,1 @@
+Error: tool 'nonexistent' not found or has no module metadata

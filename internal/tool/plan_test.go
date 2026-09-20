@@ -4,6 +4,7 @@ import (
 	"debug/buildinfo"
 	"reflect"
 	"runtime/debug"
+	"strings"
 	"testing"
 )
 
@@ -91,12 +92,21 @@ func TestInstallCommand(t *testing.T) {
 	}
 }
 
-// InstallCommand must always agree with the reference Update actually runs,
-// so the plan can never display a command that differs from execution.
-func TestInstallCommandAgreesWithUpdate(t *testing.T) {
+// The plan display rule (floating @latest) intentionally differs from the
+// executed reference (pinned @resolved version): --check shows what an
+// update would run, while installation pins the exact version outdated
+// resolution authorized. This test pins both sides of that distinction so
+// neither the display nor the execution reference drifts silently.
+func TestInstallDisplayVsExecutionReferences(t *testing.T) {
 	target := "example.com/hello"
-	if got := InstallCommand(target); got != "go install "+InstallRef(target) {
-		t.Errorf("command %q does not wrap ref %q", got, InstallRef(target))
+	if got := InstallCommand(target); got != "go install "+target+"@latest" {
+		t.Errorf("plan display command = %q, want floating @latest reference", got)
+	}
+	if got := InstallExactRef(target, "v1.4.2"); got != target+"@v1.4.2" {
+		t.Errorf("executed reference = %q, want pinned @version reference", got)
+	}
+	if strings.Contains(InstallExactRef(target, "v1.4.2"), "@latest") {
+		t.Errorf("executed reference must never float to @latest")
 	}
 }
 
