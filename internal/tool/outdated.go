@@ -199,7 +199,15 @@ func checkToolOutdated(ctx context.Context, t Tool, runner Runner) OutdatedResul
 		}
 	}
 
-	// Normalize versions for semver comparison (ensure leading 'v')
+	// Normalize versions for semver comparison (ensure leading 'v').
+	// Only the current version is stripped of pseudo-version suffixes: an
+	// installed pseudo-version newer than the latest tag must compare by
+	// its base, or every check would needlessly reinstall it. The latest
+	// version is compared as-is; under semver precedence a pseudo-version
+	// sorts below its base tag, so a tagless-ahead upstream does not read
+	// as outdated here. Whether tagless-ahead modules should update is an
+	// open module-ordering question — do not change this asymmetry without
+	// deciding that case deliberately.
 	normCurrent := current
 	if isPseudoVersion(normCurrent) {
 		normCurrent = pseudoVersionBase(normCurrent)

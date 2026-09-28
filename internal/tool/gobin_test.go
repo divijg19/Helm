@@ -2,6 +2,8 @@ package tool
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,6 +57,17 @@ func TestGetGobin(t *testing.T) {
 			gopathErr:      errTest("go env GOPATH failed"),
 			wantErrContain: "failed to determine GOPATH",
 			wantCalls:      []string{"GOBIN", "GOPATH"},
+		},
+		{
+			// A multi-entry GOPATH resolves to the first entry's bin,
+			// matching the go toolchain's own GOBIN default. Built with
+			// PathListSeparator so the expectation holds on every platform
+			// without restating the splitting rule under test.
+			name:      "Case F — multi-entry GOPATH uses first entry",
+			gobinOut:  "\n",
+			gopathOut: "/first" + string(os.PathListSeparator) + "/second\n",
+			wantPath:  filepath.Join("/first", "bin"),
+			wantCalls: []string{"GOBIN", "GOPATH"},
 		},
 	}
 

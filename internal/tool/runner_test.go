@@ -30,6 +30,12 @@ func TestHelperProcess(t *testing.T) {
 	case "longline":
 		// One 256KiB line, above the bufio.Scanner default token limit.
 		os.Stdout.WriteString(strings.Repeat("l", 256*1024) + "\n")
+	case "longline-fail":
+		// A 5MiB line exceeds even the raised scanner cap, so a stream
+		// error occurs; the non-zero exit means a process error occurs
+		// too, and the exit status must win.
+		os.Stdout.WriteString(strings.Repeat("l", 5*1024*1024) + "\n")
+		os.Exit(3)
 	case "fail":
 		os.Stdout.WriteString("partial out\n")
 		os.Stderr.WriteString("partial err\n")
@@ -150,5 +156,23 @@ func TestDrainStream_SurfacesReadError(t *testing.T) {
 	}
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "stderr") {
 		t.Errorf("expected one stderr-attributed stream error, got %v", errs)
+	}
+}
+
+// TestRunner_ExitErrorWinsOverStreamError proves the precedence rule: when
+// the process fails and the stream also errors, callers act on the process
+// exit status with the stream failure attached as context, instead of seeing
+// only the stream error.
+func TestRunner_ExitErrorWinsOverStreamError(t *testing.T) {
+	// A nil OnLine would take the buffered path, which has no scanner and
+	// therefore no stream error; the collector forces the streaming path
+	// where both errors occur together.
+	var lines int
+	_, err := runHelperCommand(t, context.Background(), "longline-fail", func(string) { lines++ })
+	if err == nil {
+		t.Fatal("expected non-nil error for exit code 3")
+	}
+	if !strings.Contains(err.Error(), "exit status 3") {
+		t.Errorf("expected the process exit status to win, got: %v", err)
 	}
 }
