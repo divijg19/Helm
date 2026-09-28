@@ -14,9 +14,9 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X helm/internal/cli.version={{.Tag}}
-      - -X helm/internal/cli.commitHash={{.Commit}}
-      - -X helm/internal/cli.buildDate={{.Date}}
+      - -X github.com/divijg19/Helm/internal/cli.version={{.Tag}}
+      - -X github.com/divijg19/Helm/internal/cli.commitHash={{.Commit}}
+      - -X github.com/divijg19/Helm/internal/cli.buildDate={{.Date}}
     goos:
       - linux
       - darwin

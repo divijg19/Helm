@@ -11,10 +11,13 @@ import (
 
 // TestHelperProcess is not a real test: it re-executes the test binary as a
 // child process that produces controlled output on demand. The mode selects
-// the behavior; each mode exits zero except "fail".
+// the behavior; each mode exits zero except "fail". It must keep a Test-prefixed
+// name because helperCommand selects it with -test.run, and the testing package
+// only runs Test* functions. In a normal run it skips, so it never reports as a
+// passing test it did not actually assert anything for.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_TEST_HELPER_PROCESS") != "1" {
-		return
+		t.Skip("helper process; not a real test")
 	}
 	const chunk = 4096
 	switch os.Getenv("GO_TEST_HELPER_MODE") {
@@ -107,18 +110,11 @@ func TestRunner_LongLinePreserved(t *testing.T) {
 		t.Fatalf("long-line run failed: %v", err)
 	}
 	if len(lines) != 1 || len(lines[0]) != 256*1024 {
-		t.Fatalf("got %d lines (first %d bytes), want 1 line of %d bytes", len(lines), len(firstOrEmpty(lines)), 256*1024)
+		t.Fatalf("got %d lines, want 1 line of %d bytes", len(lines), 256*1024)
 	}
 	if !strings.Contains(out, strings.Repeat("l", 1024)) {
 		t.Error("combined output must contain the long line")
 	}
-}
-
-func firstOrEmpty(lines []string) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	return lines[0]
 }
 
 // TestRunner_ProcessFailureKeepsOutput proves process exit errors stay

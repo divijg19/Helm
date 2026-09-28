@@ -6,32 +6,9 @@ import (
 	"slices"
 	"testing"
 
-	"helm/internal/app"
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/app"
+	"github.com/divijg19/Helm/internal/tool"
 )
-
-func TestResolveInvocation(t *testing.T) {
-	tests := []struct {
-		name     string
-		raw      string
-		wantName string
-	}{
-		{"canonical lowercase", "helm", "helm"},
-		{"canonical uppercase", "Helm", "Helm"},
-		{"compatibility alias", "update-go-tools", "update-go-tools"},
-		{"unknown defaults canonical", "helm-manager", "helm-manager"},
-		{"empty defaults canonical", "", ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			inv := ResolveInvocation(tc.raw)
-			if inv.Name != tc.wantName {
-				t.Errorf("Name = %q, want %q", inv.Name, tc.wantName)
-			}
-		})
-	}
-}
 
 // TestRunPropagatesEnvResolutionErrorToExitEnv proves the environment-failure
 // propagation chain through the REAL cli.Run path:
@@ -47,7 +24,10 @@ func TestResolveInvocation(t *testing.T) {
 //	ExitEnv (3)
 //
 // It drives the actual Run entry point with a resolver that makes NewApp fail
-// with an error wrapping ErrGobinResolution, then asserts the resulting exit code.
+// with an error wrapping ErrGobinResolution, then asserts the resulting exit
+// code. The operation is --list because Run answers --help and --version
+// before it constructs the App; --list still builds the App, so it still
+// exercises this path.
 func TestRunPropagatesEnvResolutionErrorToExitEnv(t *testing.T) {
 	prev := newApp
 	newApp = func(renderer app.Renderer, runner tool.Runner) (*app.App, error) {
@@ -55,7 +35,7 @@ func TestRunPropagatesEnvResolutionErrorToExitEnv(t *testing.T) {
 	}
 	defer func() { newApp = prev }()
 
-	code := Run(ResolveInvocation("helm"), []string{"--help"})
+	code := Run([]string{"--list"})
 	if code != ExitEnv {
 		t.Errorf("environment-resolution failure exited with %d, want ExitEnv (%d)", code, ExitEnv)
 	}
@@ -75,6 +55,11 @@ func TestRunPropagatesEnvResolutionErrorToExitEnv(t *testing.T) {
 // asserts the resulting exit code. Combined with the app-package test
 // (GetGobin error -> NewApp error), the full chain
 // GetGobin -> NewApp -> cli.Run -> ExitFailure (1) is established with real code.
+//
+// The operation is --list rather than --help because Run answers --help and
+// --version before it constructs the App (so a broken toolchain cannot stop
+// them). --list is the simplest operation that still builds the App and so
+// still exercises this error path.
 func TestRunPropagatesNewAppErrorToExitFailure(t *testing.T) {
 	prev := newApp
 	newApp = func(renderer app.Renderer, runner tool.Runner) (*app.App, error) {
@@ -82,12 +67,34 @@ func TestRunPropagatesNewAppErrorToExitFailure(t *testing.T) {
 	}
 	defer func() { newApp = prev }()
 
-	code := Run(ResolveInvocation("helm"), []string{"--help"})
+	code := Run([]string{"--list"})
 	if code != ExitFailure {
 		t.Errorf("NewApp error exited with %d, want ExitFailure (%d)", code, ExitFailure)
 	}
 	if code == ExitEnv {
 		t.Errorf("generic NewApp failure must NOT use ExitEnv (%d); that code is reserved for environment-resolution failures", ExitEnv)
+	}
+}
+
+// TestRunHelpIgnoresAppConstruction pins the reason --help and --version are
+// answered before the App is built: they must still succeed when toolchain
+// resolution fails, so they remain usable in exactly the environment they
+// exist to diagnose. The companion test
+// TestRunPropagatesEnvResolutionErrorToExitEnv proves an operation that does
+// need the toolchain still reports the environment failure.
+func TestRunHelpIgnoresAppConstruction(t *testing.T) {
+	prev := newApp
+	newApp = func(renderer app.Renderer, runner tool.Runner) (*app.App, error) {
+		return nil, fmt.Errorf("GOPATH is not set and GOBIN is empty: %w", tool.ErrGobinResolution)
+	}
+	defer func() { newApp = prev }()
+
+	for _, op := range []string{"--help", "-h", "--version", "-v"} {
+		t.Run(op, func(t *testing.T) {
+			if code := Run([]string{op}); code != ExitSuccess {
+				t.Errorf("%s exited with %d under a failing toolchain, want ExitSuccess (%d)", op, code, ExitSuccess)
+			}
+		})
 	}
 }
 
@@ -158,5 +165,35 @@ func TestParseFlags_PlanFlagsMayCombineWithOperations(t *testing.T) {
 	}
 	if !slices.Equal(opts.positional, []string{"--list"}) {
 		t.Errorf("positional = %v, want [--list]", opts.positional)
+	}
+}
+
+// TestResolveOutputMode pins the single output-mode precedence table:
+// json wins over ci, which wins over quiet, defaulting to terminal.
+// The returned flag list drives shadow warnings in the same order.
+func TestResolveOutputMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		opts       cliOptions
+		wantMode   app.RenderMode
+		wantActive []string
+	}{
+		{"none", cliOptions{}, app.ModeTerminal, nil},
+		{"json", cliOptions{jsonOutput: true}, app.ModeJSON, []string{"--json"}},
+		{"ci over quiet", cliOptions{ci: true, quiet: true}, app.ModeCI, []string{"--ci", "--quiet"}},
+		{"json over all", cliOptions{jsonOutput: true, ci: true, quiet: true}, app.ModeJSON, []string{"--json", "--ci", "--quiet"}},
+		{"quiet alone", cliOptions{quiet: true}, app.ModeQuiet, []string{"--quiet"}},
+		{"quiet with verbose", cliOptions{quiet: true, verbose: true}, app.ModeQuiet, []string{"--quiet"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode, active := resolveOutputMode(tt.opts)
+			if mode != tt.wantMode {
+				t.Errorf("mode = %v, want %v", mode, tt.wantMode)
+			}
+			if !slices.Equal(active, tt.wantActive) {
+				t.Errorf("active = %v, want %v", active, tt.wantActive)
+			}
+		})
 	}
 }

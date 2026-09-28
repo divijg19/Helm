@@ -13,4 +13,4 @@ invalid: <TMP>/gobin/notgo (missing or unreadable build info)
 healthy: 2
 local: 1
 invalid: 1
-unhealthy: 1
+unhealthy: 0

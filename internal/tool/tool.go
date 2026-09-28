@@ -56,6 +56,9 @@ func (t Tool) GoVersion() string {
 	return t.info.GoVersion
 }
 
+// InstallTarget returns the main package path `go install` is given. The name
+// distinguishes the install-time selector from ModulePath, which selects the
+// module for `go list -m`; for a valid tool the two are different strings.
 func (t Tool) InstallTarget() string {
 	return t.PackagePath()
 }
@@ -65,8 +68,10 @@ func (t Tool) CanUpdate() bool {
 	if pkg == "" || pkg == "(devel)" {
 		return false
 	}
+	// Version returns "unknown" rather than "" when no version is readable, so
+	// the empty-string case is not reachable from a loaded tool.
 	ver := t.Version()
-	if ver == "" || ver == "unknown" || ver == "(devel)" {
+	if ver == "unknown" || ver == "(devel)" {
 		return false
 	}
 	return true

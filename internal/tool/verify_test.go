@@ -260,30 +260,52 @@ func TestIsExecutable_DiscoverySemantics(t *testing.T) {
 	}
 }
 
-// TestIsExecutable_PlatformPolicies exercises the Windows and POSIX predicates
-// directly. It does NOT call Verify(); the production Verify() executable check
-// is covered by TestVerify_UsesInstalledFilename and TestVerify_Executable.
-func TestIsExecutable_PlatformPolicies(t *testing.T) {
-	tmpDir := t.TempDir()
+// TestIsExecutable_PlatformPolicies was removed: every case it asserted
+// ("tool.exe" on Windows, 0o644 and 0o755 on POSIX) is already covered by the
+// TestIsExecutable table above, which exercises the same two predicates
+// directly. It also created a temp file it never used.
 
-	// Create a Windows .exe file with no POSIX execute bits but valid build info
-	exeFile := filepath.Join(tmpDir, "tool.exe")
-	if err := os.WriteFile(exeFile, []byte("dummy"), 0o644); err != nil {
-		t.Fatal(err)
+// TestVerify_OneResultPerToolInOrder pins the 1:1 positional contract that
+// app.inventoryReport relies on when it indexes Verify's output against the
+// tool slice. If Verify ever gained a skip path, that index would silently
+// report the wrong health for every tool after the gap, so this is asserted
+// rather than assumed.
+func TestVerify_OneResultPerToolInOrder(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(name string, mode os.FileMode) Tool {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), mode); err != nil {
+			t.Fatal(err)
+		}
+		return NewTool(name, p, &buildinfo.BuildInfo{
+			Path: "example.com/" + name + "/cmd/" + name,
+			Main: debug.Module{Path: "example.com/" + name, Version: "v1.0.0"},
+		})
+	}
+	// A deliberate mix: executable, non-executable, and missing.
+	tools := []Tool{
+		mk("good", 0o755),
+		mk("noexec", 0o644),
+		NewTool("missing", filepath.Join(dir, "absent"), &buildinfo.BuildInfo{
+			Path: "example.com/absent",
+			Main: debug.Module{Path: "example.com/absent", Version: "v1.0.0"},
+		}),
 	}
 
-	// Test Windows policy: .exe file with no POSIX execute bits should be executable
-	if !isExecutableWindows("tool.exe") {
-		t.Error("expected tool.exe to be executable on Windows")
+	got := Verify(tools)
+	if len(got) != len(tools) {
+		t.Fatalf("Verify returned %d results for %d tools; callers index positionally", len(got), len(tools))
 	}
-
-	// Test POSIX policy: file with no execute bits should not be executable
-	if isExecutablePOSIX(0o644) {
-		t.Error("expected file with 0644 to not be executable on POSIX")
+	for i, vr := range got {
+		if vr.Tool.Name() != tools[i].Name() {
+			t.Errorf("result %d is for %q, want %q (order must match input)", i, vr.Tool.Name(), tools[i].Name())
+		}
 	}
-
-	// Test POSIX policy: file with execute bits should be executable
-	if !isExecutablePOSIX(0o755) {
-		t.Error("expected file with 0755 to be executable on POSIX")
+	if !got[0].Healthy {
+		t.Error("an executable tool with a package path must be healthy")
+	}
+	if got[1].Healthy || got[2].Healthy {
+		t.Errorf("non-executable and missing tools must be unhealthy, got %+v / %+v", got[1], got[2])
 	}
 }

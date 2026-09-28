@@ -5,6 +5,7 @@ import (
 	"debug/buildinfo"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -15,10 +16,7 @@ import (
 func TestCheckOutdated_UpToDate(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.0.0"}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -42,10 +40,7 @@ func TestCheckOutdated_UpToDate(t *testing.T) {
 func TestCheckOutdated_Outdated(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.1.0"}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -56,47 +51,48 @@ func TestCheckOutdated_Outdated(t *testing.T) {
 	}
 }
 
-func TestCheckOutdated_CommandError(t *testing.T) {
-	runner := mockRunner{err: errors.New("network error")}
-	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
+// TestCheckOutdated_FailureModesAreDistinguishable pins that the three
+// failure paths of checkToolOutdated produce different, identifiable errors.
+// Asserting only "error is non-nil" would let the three returns be swapped or
+// reordered without any test noticing.
+func TestCheckOutdated_FailureModesAreDistinguishable(t *testing.T) {
+	tools := []Tool{fixtureTool("foo", "example.com/foo", "v1.0.0")}
+	tests := []struct {
+		name    string
+		runner  mockRunner
+		wantHas string
+	}{
+		{"runner failure is passed through", mockRunner{err: errors.New("network error")}, "network error"},
+		{"unparseable output is reported as a parse failure", mockRunner{output: "not json"}, "failed to parse go list output"},
+		{"missing version is reported as unresolvable", mockRunner{output: `{"Path":"example.com/foo"}`}, "unable to resolve latest version"},
 	}
-	results := CheckOutdated(context.Background(), tools, runner)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Error == nil {
-		t.Errorf("expected error, got nil")
-	}
-}
-
-func TestCheckOutdated_MalformedJSON(t *testing.T) {
-	runner := mockRunner{output: "not json"}
-	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
-	}
-	results := CheckOutdated(context.Background(), tools, runner)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Error == nil {
-		t.Errorf("expected parse error, got nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := CheckOutdated(context.Background(), tools, tt.runner)
+			if len(results) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(results))
+			}
+			if results[0].Error == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !strings.Contains(results[0].Error.Error(), tt.wantHas) {
+				t.Errorf("error = %q, want it to mention %q", results[0].Error, tt.wantHas)
+			}
+			// A failed resolution must never authorize an install.
+			if results[0].Outdated {
+				t.Error("a failed resolution must not report outdated=true")
+			}
+			if results[0].Latest != "" {
+				t.Errorf("a failed resolution must not report a latest version, got %q", results[0].Latest)
+			}
+		})
 	}
 }
 
 func TestCheckOutdated_SkipsLocal(t *testing.T) {
 	runner := mockRunner{output: "{}"}
 	tools := []Tool{
-		{name: "local", path: "/gobin/local", info: &buildinfo.BuildInfo{
-			Path: "(devel)",
-			Main: debug.Module{Path: "example.com/local", Version: "(devel)"},
-		}},
+		fixtureTool("local", "example.com/local", "(devel)"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 0 {
@@ -107,10 +103,7 @@ func TestCheckOutdated_SkipsLocal(t *testing.T) {
 func TestCheckOutdated_NonSemver(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"1.2.3"}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "abc123"},
-		}},
+		fixtureTool("foo", "example.com/foo", "abc123"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -127,10 +120,7 @@ func TestCheckOutdated_NonSemver(t *testing.T) {
 func TestCheckOutdated_NonSemverEqual(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"abc123"}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "abc123"},
-		}},
+		fixtureTool("foo", "example.com/foo", "abc123"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -144,10 +134,7 @@ func TestCheckOutdated_NonSemverEqual(t *testing.T) {
 func TestCheckOutdated_EmptyLatest(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":""}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -161,10 +148,7 @@ func TestCheckOutdated_EmptyLatest(t *testing.T) {
 func TestCheckOutdated_Retracted(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.1.0","Retracted":["v1.1.0"]}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-		}},
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -178,10 +162,7 @@ func TestCheckOutdated_Retracted(t *testing.T) {
 func TestCheckOutdated_PseudoVersion(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.0.0"}`}
 	tools := []Tool{
-		{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-			Path: "example.com/foo/cmd/foo",
-			Main: debug.Module{Path: "example.com/foo", Version: "v1.0.1-0.20230501123456-abcdef123456"},
-		}},
+		fixtureTool("foo", "example.com/foo", "v1.0.1-0.20230501123456-abcdef123456"),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -199,7 +180,7 @@ func TestCheckOutdated_IdenticalPseudoNotOutdated(t *testing.T) {
 	pseudo := "v1.2.3-0.20230601120000-abcdef123456"
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"` + pseudo + `"}`}
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", pseudo),
+		fixtureTool("foo", "example.com/foo", pseudo),
 	}
 	results := CheckOutdated(context.Background(), tools, runner)
 	if len(results) != 1 {
@@ -298,10 +279,7 @@ func TestCheckOutdated_RetractedRange(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := mockRunner{output: `{"Path":"example.com/foo","Version":"` + tc.latest + `","Retracted":["` + tc.retraction + `"]}`}
 			tools := []Tool{
-				{name: "foo", path: "/gobin/foo", info: &buildinfo.BuildInfo{
-					Path: "example.com/foo/cmd/foo",
-					Main: debug.Module{Path: "example.com/foo", Version: "v1.0.0"},
-				}},
+				fixtureTool("foo", "example.com/foo", "v1.0.0"),
 			}
 			results := CheckOutdated(context.Background(), tools, runner)
 			if len(results) != 1 {
@@ -326,27 +304,15 @@ func TestCheckOutdated_RetractedRange(t *testing.T) {
 	}
 }
 
-// makeOutdatedTool builds a synthetic updatable Tool for concurrency tests.
-func makeOutdatedTool(name, pkg, version string) Tool {
-	return Tool{
-		name: name,
-		path: "/gobin/" + name,
-		info: &buildinfo.BuildInfo{
-			Path: pkg + "/cmd/" + name,
-			Main: debug.Module{Path: pkg, Version: version},
-		},
-	}
-}
-
 // TestCheckOutdated_SequentialEquivalence proves that the concurrent execution
 // path with a worker count of 1 produces results identical to the existing
 // sequential contract: same length, same tool order, same per-tool outcome.
 func TestCheckOutdated_SequentialEquivalence(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v9.9.9"}`}
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", "v1.0.0"),
-		makeOutdatedTool("bar", "example.com/bar", "v2.0.0"),
-		makeOutdatedTool("baz", "example.com/baz", "v3.0.0"),
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
+		fixtureTool("bar", "example.com/bar", "v2.0.0"),
+		fixtureTool("baz", "example.com/baz", "v3.0.0"),
 	}
 
 	got := checkOutdatedConcurrency(context.Background(), tools, runner, 1)
@@ -369,11 +335,11 @@ func TestCheckOutdated_SequentialEquivalence(t *testing.T) {
 func TestCheckOutdated_ConcurrentMultiTool(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v9.9.9"}`}
 	tools := []Tool{
-		makeOutdatedTool("alpha", "example.com/alpha", "v1.0.0"),
-		makeOutdatedTool("beta", "example.com/beta", "v2.0.0"),
-		makeOutdatedTool("gamma", "example.com/gamma", "v3.0.0"),
-		makeOutdatedTool("delta", "example.com/delta", "v4.0.0"),
-		makeOutdatedTool("epsilon", "example.com/epsilon", "v5.0.0"),
+		fixtureTool("alpha", "example.com/alpha", "v1.0.0"),
+		fixtureTool("beta", "example.com/beta", "v2.0.0"),
+		fixtureTool("gamma", "example.com/gamma", "v3.0.0"),
+		fixtureTool("delta", "example.com/delta", "v4.0.0"),
+		fixtureTool("epsilon", "example.com/epsilon", "v5.0.0"),
 	}
 
 	got := checkOutdatedConcurrency(context.Background(), tools, runner, defaultOutdatedConcurrency)
@@ -390,30 +356,44 @@ func TestCheckOutdated_ConcurrentMultiTool(t *testing.T) {
 	}
 }
 
-// delayedRunner simulates variable per-tool latency so that later-index tools
-// finish before earlier ones, forcing workers to complete out of order. The
-// returned JSON keys the latest version off the requested module path so each
-// result can be validated independently of position.
-type delayedRunner struct {
-	delays map[string]time.Duration
-	mu     sync.Mutex
-	order  []string
+// gatedRunner guarantees a specific completion order without relying on
+// wall-clock delays: each tool blocks until the ones that must finish first
+// have signalled. "first" waits for both "second" and "third", "second" waits
+// for "third", and "third" never waits, so the completion order third, second,
+// first is structural rather than a 50ms scheduling margin.
+type gatedRunner struct {
+	thirdDone  chan struct{}
+	secondDone chan struct{}
+	mu         sync.Mutex
+	order      []string
 }
 
-func (r *delayedRunner) Run(ctx context.Context, c Command) (string, error) {
-	mod := c.Args[len(c.Args)-1]
-	mod = strings.TrimSuffix(mod, "@latest")
-
+func (r *gatedRunner) record(mod string) {
 	r.mu.Lock()
 	r.order = append(r.order, mod)
 	r.mu.Unlock()
+}
 
-	if d, ok := r.delays[mod]; ok {
-		select {
-		case <-time.After(d):
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
+func (r *gatedRunner) Run(ctx context.Context, c Command) (string, error) {
+	mod := strings.TrimSuffix(c.Args[len(c.Args)-1], "@latest")
+
+	// close (not send) is what makes this safe with more than one waiter:
+	// closing broadcasts, so both "second" and "first" observe the signal.
+	// Each tool records itself only after every tool it waits on has already
+	// recorded and signalled, so the recorded order is deterministic rather
+	// than depending on how two goroutines interleave after unblocking.
+	switch mod {
+	case "example.com/third":
+		r.record(mod)
+		close(r.thirdDone)
+	case "example.com/second":
+		<-r.thirdDone
+		r.record(mod)
+		close(r.secondDone)
+	default: // "example.com/first" is strictly last
+		<-r.thirdDone
+		<-r.secondDone
+		r.record(mod)
 	}
 	return `{"Path":"` + mod + `","Version":"v9.9.9"}`, nil
 }
@@ -424,47 +404,40 @@ func (r *delayedRunner) Run(ctx context.Context, c Command) (string, error) {
 // results to remain in the original input order.
 func TestCheckOutdated_DeterministicOrdering(t *testing.T) {
 	tools := []Tool{
-		makeOutdatedTool("first", "example.com/first", "v1.0.0"),
-		makeOutdatedTool("second", "example.com/second", "v1.0.0"),
-		makeOutdatedTool("third", "example.com/third", "v1.0.0"),
+		fixtureTool("first", "example.com/first", "v1.0.0"),
+		fixtureTool("second", "example.com/second", "v1.0.0"),
+		fixtureTool("third", "example.com/third", "v1.0.0"),
 	}
 
-	runner := &delayedRunner{
-		delays: map[string]time.Duration{
-			"example.com/first":  100 * time.Millisecond,
-			"example.com/second": 50 * time.Millisecond,
-			"example.com/third":  0,
-		},
+	runner := &gatedRunner{
+		thirdDone:  make(chan struct{}),
+		secondDone: make(chan struct{}),
 	}
 
-	got := checkOutdatedConcurrency(context.Background(), tools, runner, defaultOutdatedConcurrency)
+	// Concurrency is pinned to 3 so all three workers start immediately: the
+	// gate requires each tool to run at the same time as the one it waits on.
+	got := checkOutdatedConcurrency(context.Background(), tools, runner, 3)
 	if len(got) != len(tools) {
 		t.Fatalf("expected %d results, got %d", len(tools), len(got))
 	}
 
-	want := []string{"first", "second", "third"}
-	for i, r := range got {
-		if r.Tool.Name() != want[i] {
-			t.Errorf("result %d: expected tool %s (original order), got %s", i, want[i], r.Tool.Name())
-		}
-		// Each result must report the latest version the runner returned for
-		// its own module, proving the correct per-tool outcome landed in the
-		// correct slot.
-		if r.Latest != "v9.9.9" {
-			t.Errorf("result %d (%s): expected latest v9.9.9, got %s", i, r.Tool.Name(), r.Latest)
-		}
-	}
-
-	// Sanity: confirm the runner actually completed out of order, otherwise the
-	// test would not have exercised the concurrency hazard it guards against.
+	// The gate makes the workers genuinely finish in reverse order, so this
+	// check is a precondition, not a hopeful observation: a regression that
+	// stopped serializing them would make it fail here loudly instead of
+	// silently weakening the ordering assertion below.
 	runner.mu.Lock()
 	completed := append([]string(nil), runner.order...)
 	runner.mu.Unlock()
-	if len(completed) == 3 &&
-		completed[0] == "third" && completed[1] == "second" && completed[2] == "first" {
-		// out-of-order completion observed; ordering guard is meaningful.
-	} else {
-		t.Logf("completion order was %v (out-of-order completion not observed; guard still validates order)", completed)
+	wantOrder := []string{"example.com/third", "example.com/second", "example.com/first"}
+	if !reflect.DeepEqual(completed, wantOrder) {
+		t.Fatalf("completion order was %v, want %v; the ordering assertion below would be vacuous", completed, wantOrder)
+	}
+
+	wantNames := []string{"first", "second", "third"}
+	for i, w := range wantNames {
+		if got[i].Tool.Name() != w {
+			t.Errorf("result %d = %q, want %q (results must keep input order)", i, got[i].Tool.Name(), w)
+		}
 	}
 }
 
@@ -475,9 +448,9 @@ func TestCheckOutdated_MixedSuccessFailure(t *testing.T) {
 	failRunner := failAfterRunner{errTool: "example.com/bar"}
 
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", "v1.0.0"),
-		makeOutdatedTool("bar", "example.com/bar", "v1.0.0"),
-		makeOutdatedTool("baz", "example.com/baz", "v1.0.0"),
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
+		fixtureTool("bar", "example.com/bar", "v1.0.0"),
+		fixtureTool("baz", "example.com/baz", "v1.0.0"),
 	}
 
 	got := checkOutdatedConcurrency(context.Background(), tools, failRunner, defaultOutdatedConcurrency)
@@ -516,8 +489,8 @@ func (r failAfterRunner) Run(ctx context.Context, c Command) (string, error) {
 // tool still receives a result (carrying the cancellation error).
 func TestCheckOutdated_Cancellation(t *testing.T) {
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", "v1.0.0"),
-		makeOutdatedTool("bar", "example.com/bar", "v1.0.0"),
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
+		fixtureTool("bar", "example.com/bar", "v1.0.0"),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -553,13 +526,18 @@ func TestCheckOutdated_EmptyInput(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected 0 results, got %d", len(got))
 	}
+	// A non-nil empty slice keeps the never-null JSON array contract: a nil
+	// here would serialize as "results": null downstream.
+	if got == nil {
+		t.Error("expected a non-nil empty slice, got nil")
+	}
 }
 
 // TestCheckOutdated_SingleTool verifies the fast, single-item path returns the
 // expected result without unnecessary goroutine overhead hazards.
 func TestCheckOutdated_SingleTool(t *testing.T) {
 	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"v1.1.0"}`}
-	tools := []Tool{makeOutdatedTool("foo", "example.com/foo", "v1.0.0")}
+	tools := []Tool{fixtureTool("foo", "example.com/foo", "v1.0.0")}
 
 	got := checkOutdatedConcurrency(context.Background(), tools, runner, defaultOutdatedConcurrency)
 	if len(got) != 1 {
@@ -575,7 +553,7 @@ func TestCheckOutdated_SingleTool(t *testing.T) {
 func TestCheckOutdated_SkipsLocalUnderConcurrency(t *testing.T) {
 	runner := mockRunner{output: "{}"}
 	tools := []Tool{
-		makeOutdatedTool("updatable", "example.com/updatable", "v1.0.0"),
+		fixtureTool("updatable", "example.com/updatable", "v1.0.0"),
 		Tool{
 			name: "local",
 			path: "/gobin/local",
@@ -614,8 +592,8 @@ func (r *countingRunner) Run(ctx context.Context, c Command) (string, error) {
 // each updatable tool still receives the cancellation error in order.
 func TestCheckOutdated_PreCancelledContext(t *testing.T) {
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", "v1.0.0"),
-		makeOutdatedTool("bar", "example.com/bar", "v1.0.0"),
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
+		fixtureTool("bar", "example.com/bar", "v1.0.0"),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -673,9 +651,9 @@ func (r *mixedCancelRunner) Run(ctx context.Context, c Command) (string, error) 
 // without deadlock and preserve deterministic ordering.
 func TestCheckOutdated_MidFlightCancellationMixed(t *testing.T) {
 	tools := []Tool{
-		makeOutdatedTool("fast", "example.com/fast", "v1.0.0"),
-		makeOutdatedTool("blocked", "example.com/blocked", "v1.0.0"),
-		makeOutdatedTool("slow", "example.com/slow", "v1.0.0"),
+		fixtureTool("fast", "example.com/fast", "v1.0.0"),
+		fixtureTool("blocked", "example.com/blocked", "v1.0.0"),
+		fixtureTool("slow", "example.com/slow", "v1.0.0"),
 	}
 
 	runner := &mixedCancelRunner{
@@ -756,7 +734,7 @@ func TestCheckOutdated_WorkerBoundEnforced(t *testing.T) {
 	const n = 12
 	tools := make([]Tool, n)
 	for i := 0; i < n; i++ {
-		tools[i] = makeOutdatedTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("example.com/tool%d", i), "v1.0.0")
+		tools[i] = fixtureTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("example.com/tool%d", i), "v1.0.0")
 	}
 
 	runner := &boundTrackingRunner{}
@@ -784,10 +762,10 @@ func TestCheckOutdated_WorkerBoundEnforced(t *testing.T) {
 // (bound=default) execution must produce identical results in every field.
 func TestCheckOutdated_SequentialConcurrentEquivalence(t *testing.T) {
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", "v1.0.0"),
-		makeOutdatedTool("bar", "example.com/bar", "v2.0.0"),
-		makeOutdatedTool("baz", "example.com/baz", "v3.0.0"),
-		makeOutdatedTool("qux", "example.com/qux", "v4.0.0"),
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
+		fixtureTool("bar", "example.com/bar", "v2.0.0"),
+		fixtureTool("baz", "example.com/baz", "v3.0.0"),
+		fixtureTool("qux", "example.com/qux", "v4.0.0"),
 	}
 
 	const out = `{"Path":"example.com/foo","Version":"v9.9.9"}`
@@ -857,7 +835,7 @@ func TestCheckOutdated_MixedSuccessFailureTable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tools := make([]Tool, tc.n)
 			for i := 0; i < tc.n; i++ {
-				tools[i] = makeOutdatedTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("example.com/tool%d", i), "v1.0.0")
+				tools[i] = fixtureTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("example.com/tool%d", i), "v1.0.0")
 			}
 
 			failSet := make(map[int]bool, len(tc.failingIndices))
@@ -887,5 +865,100 @@ func TestCheckOutdated_MixedSuccessFailureTable(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCheckOutdated_ConcurrencyClampToAtLeastOne pins the clamp that keeps the
+// worker pool from launching zero workers. This is the one missing test that
+// could hide a real failure rather than report one: with no clamp, a
+// non-positive concurrency means the producer blocks forever on the
+// unbuffered jobs channel and the whole test binary hangs until the go test
+// timeout, instead of failing with a readable assertion.
+func TestCheckOutdated_ConcurrencyClampToAtLeastOne(t *testing.T) {
+	tools := []Tool{
+		fixtureTool("first", "example.com/first", "v1.0.0"),
+		fixtureTool("second", "example.com/second", "v1.0.0"),
+	}
+	runner := mockRunner{output: `{"Path":"example.com/first","Version":"v1.1.0"}`}
+
+	for _, tc := range []struct {
+		name        string
+		concurrency int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"large negative", -100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Guard the guard: a hang here fails the suite by timeout.
+			done := make(chan []OutdatedResult, 1)
+			go func() {
+				done <- checkOutdatedConcurrency(context.Background(), tools, runner, tc.concurrency)
+			}()
+			select {
+			case got := <-done:
+				if len(got) != len(tools) {
+					t.Errorf("concurrency %d returned %d results, want %d", tc.concurrency, len(got), len(tools))
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("concurrency %d did not complete; the worker clamp is not being applied", tc.concurrency)
+			}
+		})
+	}
+}
+
+// TestCheckOutdated_NormalizesMissingVPrefix pins the semver normalization
+// path: a module reporting "1.1.0" without the v prefix must still compare as
+// newer than "v1.0.0". The existing non-semver test used "abc123", which
+// fails validation and takes the other branch, so this path was untested.
+func TestCheckOutdated_NormalizesMissingVPrefix(t *testing.T) {
+	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"1.1.0"}`}
+	tools := []Tool{fixtureTool("foo", "example.com/foo", "v1.0.0")}
+
+	results := CheckOutdated(context.Background(), tools, runner)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Error != nil {
+		t.Fatalf("unexpected error: %v", results[0].Error)
+	}
+	if !results[0].Outdated {
+		t.Error("expected a v-less latest version to still compare as outdated")
+	}
+	if results[0].Latest != "1.1.0" {
+		t.Errorf("Latest = %q, want the upstream string reported verbatim as 1.1.0", results[0].Latest)
+	}
+
+	// The reverse direction must not report a downgrade as outdated.
+	sameRunner := mockRunner{output: `{"Path":"example.com/foo","Version":"1.0.0"}`}
+	same := CheckOutdated(context.Background(), tools, sameRunner)
+	if len(same) != 1 || same[0].Outdated {
+		t.Errorf("equal versions must not be outdated, got %+v", same)
+	}
+}
+
+// TestCheckOutdated_EmptyModulePathFallsBackToPackage covers the module-path
+// fallback used for `go list -m`. Every shared fixture sets Main.Path, so the
+// fallback was never taken.
+func TestCheckOutdated_EmptyModulePathFallsBackToPackage(t *testing.T) {
+	var gotArgs []string
+	recorder := runnerFunc(func(ctx context.Context, c Command) (string, error) {
+		gotArgs = c.Args
+		return `{"Path":"example.com/foo","Version":"v2.0.0"}`, nil
+	})
+	// Main.Path empty => ModulePath() falls back to the main package path.
+	// Main.Version must still be set or CanUpdate() would skip the tool.
+	noModule := NewTool("foo", "/gobin/foo", &buildinfo.BuildInfo{
+		Path: "example.com/foo",
+		Main: debug.Module{Version: "v1.0.0"},
+	})
+
+	results := CheckOutdated(context.Background(), []Tool{noModule}, recorder)
+	if len(results) != 1 || results[0].Error != nil {
+		t.Fatalf("expected one clean result, got %+v", results)
+	}
+	want := "example.com/foo@latest"
+	if len(gotArgs) < 2 || gotArgs[len(gotArgs)-1] != want {
+		t.Errorf("go list args = %v, want the query to end with %q", gotArgs, want)
 	}
 }

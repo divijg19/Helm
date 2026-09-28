@@ -5,21 +5,22 @@ import (
 	"debug/buildinfo"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
-	"helm/internal/testutil"
+	"github.com/divijg19/Helm/internal/testutil"
 )
 
 var (
 	binaryPath       string
 	compatBinaryPath string
 	upperBinaryPath  string
-	testDir          string
 	updateFlag       = flag.Bool("update", false, "update golden files")
 )
 
@@ -32,14 +33,13 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(tmp)
-	testDir = tmp
 
 	binaryPath = filepath.Join(tmp, "helm")
-	build := exec.Command("go", "build", "-ldflags=-X=helm/internal/cli.version=v1.9.0-test -X=helm/internal/cli.commitHash=abc1234 -X=helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
+	build := exec.Command("go", "build", "-ldflags=-X=github.com/divijg19/Helm/internal/cli.version=v1.9.0-test -X=github.com/divijg19/Helm/internal/cli.commitHash=abc1234 -X=github.com/divijg19/Helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
+		os.RemoveAll(tmp)
 		panic("go build failed: " + err.Error())
 	}
 
@@ -48,14 +48,21 @@ func TestMain(m *testing.M) {
 	// resolution (basename extraction) is what differs, not the binary.
 	compatBinaryPath = filepath.Join(tmp, "update-go-tools")
 	if err := copyFile(binaryPath, compatBinaryPath); err != nil {
+		os.RemoveAll(tmp)
 		panic("copy failed: " + err.Error())
 	}
 	upperBinaryPath = filepath.Join(tmp, "Helm")
 	if err := copyFile(binaryPath, upperBinaryPath); err != nil {
+		os.RemoveAll(tmp)
 		panic("copy failed: " + err.Error())
 	}
 
-	os.Exit(m.Run())
+	// The temp dir holds the three built binaries and must be removed after
+	// the run. It cannot be deferred: os.Exit below discards deferred calls,
+	// which would leak a directory per test run.
+	code := m.Run()
+	os.RemoveAll(tmp)
+	os.Exit(code)
 }
 
 type cliResult struct {
@@ -105,8 +112,11 @@ var (
 	goVersionRe = regexp.MustCompile(`go1\.\d+(\.\d+)?(-[A-Za-z0-9:\.]+)?`)
 	// durationRe masks only the summary Duration line (label width 14, so
 	// "Duration" plus six spaces). A broad N.Ns pattern would also mask
-	// version-like or path substrings elsewhere and hide real drift.
-	durationRe = regexp.MustCompile(`(?m)^Duration\s+\d+\.\d+s`)
+	// version-like or path substrings elsewhere and hide real drift. The
+	// optional minutes group is required: formatDuration switches to "XmY.Zs"
+	// at one minute, so a mask that only matched seconds would leave the
+	// minute form unmasked and fail the golden on any slow run.
+	durationRe = regexp.MustCompile(`(?m)^Duration\s+(\d+m)?\d+\.\d+s`)
 )
 
 func normalizeOutput(t *testing.T, gobinDir, s string) string {
@@ -119,7 +129,7 @@ func normalizeOutput(t *testing.T, gobinDir, s string) string {
 	return strings.TrimSpace(s)
 }
 
-func checkGolden(t *testing.T, gobinDir, name string, got, gotErr string, goldenPath, goldenErrPath string) {
+func checkGolden(t *testing.T, got, gotErr, goldenPath, goldenErrPath string) {
 	t.Helper()
 	if *updateFlag {
 		if goldenPath != "" {
@@ -150,11 +160,13 @@ func goldenPath(name string) string {
 
 // assertCleanTree refuses golden rewrites on a dirty worktree, so `-update`
 // can never launder a behavior regression into the expected files alongside
-// unrelated local changes. If git is unavailable the check is skipped rather
-// than blocking the rewrite.
+// unrelated local changes. If git is unavailable the rewrite still proceeds,
+// because the safety net is best-effort rather than a hard dependency, but it
+// says so instead of failing silently.
 func assertCleanTree() {
 	out, err := exec.Command("git", "status", "--porcelain").Output()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: -update could not verify a clean worktree (%v); goldens will be rewritten anyway\n", err)
 		return
 	}
 	if len(bytes.TrimSpace(out)) > 0 {
@@ -189,14 +201,14 @@ func TestHelp(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--help")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "help", got, "", goldenPath("help"), "")
+	checkGolden(t, got, "", goldenPath("help"), "")
 }
 
 func TestVersion(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--version")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "version", got, "", goldenPath("version"), "")
+	checkGolden(t, got, "", goldenPath("version"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -206,7 +218,7 @@ func TestList(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--list")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "list", got, "", goldenPath("list"), "")
+	checkGolden(t, got, "", goldenPath("list"), "")
 	if result.code != 1 {
 		t.Errorf("exit code: expected 1 (issues found), got %d", result.code)
 	}
@@ -216,7 +228,7 @@ func TestListCI(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--list", "--ci")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "list-ci", got, "", goldenPath("list-ci"), "")
+	checkGolden(t, got, "", goldenPath("list-ci"), "")
 	if result.code != 1 {
 		t.Errorf("exit code: expected 1 (issues found), got %d", result.code)
 	}
@@ -226,7 +238,7 @@ func TestOutdated(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--outdated")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "outdated", got, "", goldenPath("outdated"), "")
+	checkGolden(t, got, "", goldenPath("outdated"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -236,7 +248,7 @@ func TestInfoTool(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info", "hello")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "info", got, "", goldenPath("info"), "")
+	checkGolden(t, got, "", goldenPath("info"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -246,7 +258,7 @@ func TestDefaultUpdate(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env())
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "update", got, "", goldenPath("update"), "")
+	checkGolden(t, got, "", goldenPath("update"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -276,6 +288,63 @@ func TestDefaultUpdateInstallsOnlyOutdated(t *testing.T) {
 	}
 }
 
+// TestDefaultUpdateFiltered proves the filter-scope contract end to end:
+// `helm world` must install only the named tool and must not even evaluate the
+// others. Filter validation and candidate filtering were each covered in
+// isolation; this is the composition a user actually runs, and the assertion
+// that matters is scope, not versions: the JSON report must not mention any
+// unselected tool, so an unselected tool that is merely up-to-date cannot hide
+// a filter that stopped filtering.
+func TestDefaultUpdateFiltered(t *testing.T) {
+	f := testutil.NewFixture(t)
+	result := runCLI(t, f.Env(), "world", "--json")
+	if result.code != 0 {
+		t.Fatalf("exit code: expected 0, got %d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+
+	var report struct {
+		Updated  []string `json:"updated"`
+		UpToDate []string `json:"up_to_date"`
+		Failed   []string `json:"failed"`
+		Skipped  []string `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &report); err != nil {
+		t.Fatalf("cannot parse update JSON: %v\n%s", err, result.stdout)
+	}
+
+	if !slices.Equal(report.Updated, []string{"world"}) {
+		t.Errorf("updated = %v, want [world] only", report.Updated)
+	}
+	// The scope assertion: hello is current, so if the filter were ignored it
+	// would be evaluated and reported as up-to-date. It must be absent.
+	if len(report.UpToDate) != 0 {
+		t.Errorf("up_to_date = %v, want empty: an unselected tool must not be evaluated", report.UpToDate)
+	}
+	if strings.Contains(result.stdout, "hello") {
+		t.Errorf("report must not mention the unselected tool hello, got:\n%s", result.stdout)
+	}
+	if len(report.Failed) != 0 {
+		t.Errorf("failed = %v, want empty", report.Failed)
+	}
+	// Skipped carries invalid binaries, which are always reported. It must not
+	// carry localdev: that tool is ineligible, but it was not selected either,
+	// so reporting it would mean the selection had been widened.
+	if !slices.Contains(report.Skipped, f.Gobin("notgo")) {
+		t.Errorf("skipped = %v, want it to contain the invalid binary path", report.Skipped)
+	}
+	if slices.Contains(report.Skipped, f.Gobin("localdev")) {
+		t.Errorf("skipped = %v, want it to exclude the unselected local tool", report.Skipped)
+	}
+
+	// The install itself must have happened, at the resolved version.
+	if got := installedVersion(t, f.Gobin("world")); got != "v1.3.0" {
+		t.Errorf("world version = %q, want v1.3.0 (the selected tool must be updated)", got)
+	}
+	if got := installedVersion(t, f.Gobin("hello")); got != "v1.0.0" {
+		t.Errorf("hello version = %q, want v1.0.0 (unselected tool must not be touched)", got)
+	}
+}
+
 func installedVersion(t *testing.T, binPath string) string {
 	t.Helper()
 	bi, err := buildinfo.ReadFile(binPath)
@@ -289,7 +358,7 @@ func TestPlanCheck(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--check")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "check", got, "", goldenPath("check"), "")
+	checkGolden(t, got, "", goldenPath("check"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -311,7 +380,7 @@ func TestPlanVerbose(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--check", "--verbose")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "check-verbose", got, "", goldenPath("check-verbose"), "")
+	checkGolden(t, got, "", goldenPath("check-verbose"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -332,7 +401,7 @@ func TestQuietUpdate(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "-q")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "quiet", got, "", goldenPath("quiet"), "")
+	checkGolden(t, got, "", goldenPath("quiet"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -383,7 +452,7 @@ func TestUpdateCI(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--ci")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "update-ci", got, "", goldenPath("update-ci"), "")
+	checkGolden(t, got, "", goldenPath("update-ci"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -393,7 +462,7 @@ func TestListJSON(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--list", "--json")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "list-json", got, "", jsonGoldenPath("list"), "")
+	checkGolden(t, got, "", jsonGoldenPath("list"), "")
 	if result.code != 1 {
 		t.Errorf("exit code: expected 1 (issues found), got %d", result.code)
 	}
@@ -407,7 +476,7 @@ func TestPlanJSON(t *testing.T) {
 		t.Errorf("--dry-run --json must match --check --json:\n--check:\n%s\n--dry-run:\n%s", check.stdout, dry.stdout)
 	}
 	got := normalizeOutput(t, f.GobinDir, check.stdout)
-	checkGolden(t, f.GobinDir, "plan-json", got, "", jsonGoldenPath("plan"), "")
+	checkGolden(t, got, "", jsonGoldenPath("plan"), "")
 	if check.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", check.code)
 	}
@@ -417,7 +486,7 @@ func TestOutdatedJSON(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--outdated", "--json")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "outdated-json", got, "", jsonGoldenPath("outdated"), "")
+	checkGolden(t, got, "", jsonGoldenPath("outdated"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -427,7 +496,7 @@ func TestInfoJSON(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info", "hello", "--json")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "info-json", got, "", jsonGoldenPath("info"), "")
+	checkGolden(t, got, "", jsonGoldenPath("info"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -440,7 +509,7 @@ func TestUpdateJSON(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--json")
 	got := normalizeOutput(t, f.GobinDir, result.stdout)
-	checkGolden(t, f.GobinDir, "update-json", got, "", jsonGoldenPath("update"), "")
+	checkGolden(t, got, "", jsonGoldenPath("update"), "")
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
@@ -469,6 +538,19 @@ func TestDiscardedModifiersWarn(t *testing.T) {
 		t.Errorf("--check --json --verbose must still plan cleanly, got exit %d", verbose.code)
 	}
 
+	quiet := runCLI(t, f.Env(), "--check", "--quiet", "--verbose")
+	if !strings.Contains(quiet.stderr, "Warning: --verbose has no effect with --quiet.") {
+		t.Errorf("expected dropped-verbose warning for --quiet, got stderr:\n%s", quiet.stderr)
+	}
+	if quiet.code != 0 {
+		t.Errorf("--check --quiet --verbose must still plan cleanly, got exit %d", quiet.code)
+	}
+
+	quietShort := runCLI(t, f.Env(), "--check", "-q", "-V")
+	if !strings.Contains(quietShort.stderr, "Warning: --verbose has no effect with --quiet.") {
+		t.Errorf("expected the same warning for the -q -V aliases, got stderr:\n%s", quietShort.stderr)
+	}
+
 	modes := runCLI(t, f.Env(), "--json", "--ci")
 	if !strings.Contains(modes.stderr, "Warning: --ci ignored; --json takes precedence.") {
 		t.Errorf("expected mode-precedence warning, got stderr:\n%s", modes.stderr)
@@ -483,7 +565,7 @@ func TestDiscardedModifiersWarn(t *testing.T) {
 func TestUnknownOption(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--unknown")
-	checkGolden(t, f.GobinDir, "unknown-option", "", strings.TrimSpace(result.stderr), "", goldenPath("unknown-option-stderr"))
+	checkGolden(t, "", strings.TrimSpace(result.stderr), "", goldenPath("unknown-option-stderr"))
 	if result.code != 2 {
 		t.Errorf("exit code: expected 2, got %d", result.code)
 	}
@@ -554,7 +636,7 @@ func TestUpdateResolutionFailureJSONExitsNonZero(t *testing.T) {
 func TestForeignCompletionInvocationFailsSafely(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "completion", "fish")
-	checkGolden(t, f.GobinDir, "unknown-tool", "", strings.TrimSpace(result.stderr), "", goldenPath("unknown-tool-stderr"))
+	checkGolden(t, "", strings.TrimSpace(result.stderr), "", goldenPath("unknown-tool-stderr"))
 	if result.code == 0 {
 		t.Errorf("exit code: expected non-zero for unknown tool names, got 0\nstdout:\n%s", result.stdout)
 	}
@@ -578,29 +660,34 @@ func TestForeignCompletionInvocationFailsSafely(t *testing.T) {
 func TestUnknownToolFilterFailsFast(t *testing.T) {
 	f := testutil.NewFixture(t)
 	for _, args := range [][]string{{"nosuchtool"}, {"hello", "nosuchtool"}} {
-		result := runCLI(t, f.Env(), args...)
-		if result.code == 0 {
-			t.Errorf("helm %v: expected non-zero exit, got 0", args)
-		}
-		if strings.TrimSpace(result.stdout) != "" {
-			t.Errorf("helm %v: expected empty stdout, got:\n%s", args, result.stdout)
-		}
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			result := runCLI(t, f.Env(), args...)
+			if result.code == 0 {
+				t.Errorf("helm %v: expected non-zero exit, got 0", args)
+			}
+			if strings.TrimSpace(result.stdout) != "" {
+				t.Errorf("helm %v: expected empty stdout, got:\n%s", args, result.stdout)
+			}
+		})
 	}
 }
 
 func TestInfoMissing(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info", "nonexistent")
-	checkGolden(t, f.GobinDir, "info-missing", "", strings.TrimSpace(result.stderr), "", goldenPath("info-missing-stderr"))
+	checkGolden(t, "", strings.TrimSpace(result.stderr), "", goldenPath("info-missing-stderr"))
 	if result.code != 1 {
 		t.Errorf("exit code: expected 1 (operational lookup failure), got %d", result.code)
+	}
+	if strings.TrimSpace(result.stdout) != "" {
+		t.Errorf("lookup failure must render no report on stdout, got:\n%s", result.stdout)
 	}
 }
 
 func TestInfoNoName(t *testing.T) {
 	f := testutil.NewFixture(t)
 	result := runCLI(t, f.Env(), "--info")
-	checkGolden(t, f.GobinDir, "info-noname", "", strings.TrimSpace(result.stderr), "", goldenPath("info-noname-stderr"))
+	checkGolden(t, "", strings.TrimSpace(result.stderr), "", goldenPath("info-noname-stderr"))
 	if result.code != 2 {
 		t.Errorf("exit code: expected 2 (usage error), got %d", result.code)
 	}
@@ -624,16 +711,18 @@ func TestExplicitOpsRejectPositionals(t *testing.T) {
 		{"--info", "hello", "extra"},
 	}
 	for _, args := range cases {
-		result := runCLI(t, f.Env(), args...)
-		if result.code != 2 {
-			t.Errorf("helm %v: expected exit 2, got %d", args, result.code)
-		}
-		if strings.TrimSpace(result.stdout) != "" {
-			t.Errorf("helm %v: expected empty stdout, got:\n%s", args, result.stdout)
-		}
-		if strings.TrimSpace(result.stderr) == "" {
-			t.Errorf("helm %v: expected stderr diagnostic, got none", args)
-		}
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			result := runCLI(t, f.Env(), args...)
+			if result.code != 2 {
+				t.Errorf("helm %v: expected exit 2, got %d", args, result.code)
+			}
+			if strings.TrimSpace(result.stdout) != "" {
+				t.Errorf("helm %v: expected empty stdout, got:\n%s", args, result.stdout)
+			}
+			if strings.TrimSpace(result.stderr) == "" {
+				t.Errorf("helm %v: expected stderr diagnostic, got none", args)
+			}
+		})
 	}
 }
 
@@ -676,5 +765,33 @@ func TestAliasUpdateExecutesSameProduct(t *testing.T) {
 	gotAlias := normalizeOutput(t, fAlias.GobinDir, aliasRes.stdout)
 	if gotHelm != gotAlias {
 		t.Errorf("update-go-tools must produce identical update output to helm:\nhelm:\n%s\nupdate-go-tools:\n%s", gotHelm, gotAlias)
+	}
+}
+
+// TestLoadFailureIsACleanError pins the tool-loading failure path end to end:
+// a GOBIN that cannot be read must exit 1 with a diagnostic on stderr and no
+// report on stdout. Nothing asserted this, so a regression here could surface
+// as a raw panic or a stack trace instead of a clean error.
+func TestLoadFailureIsACleanError(t *testing.T) {
+	f := testutil.NewFixture(t)
+	missing := filepath.Join(t.TempDir(), "no-such-gobin")
+	env := append(f.Env(), "GOBIN="+missing)
+
+	for _, op := range [][]string{{"--list"}, {"--outdated"}, {"--check"}, {"--json"}} {
+		t.Run(strings.Join(op, " "), func(t *testing.T) {
+			result := runCLI(t, env, op...)
+			if result.code != 1 {
+				t.Errorf("exit code = %d, want 1 (operational failure), got stderr:\n%s", result.code, result.stderr)
+			}
+			if !strings.Contains(result.stderr, "Error loading tools:") {
+				t.Errorf("expected the loading diagnostic on stderr, got:\n%s", result.stderr)
+			}
+			if strings.TrimSpace(result.stdout) != "" {
+				t.Errorf("expected no report on stdout, got:\n%s", result.stdout)
+			}
+			if strings.Contains(result.stderr, "goroutine ") || strings.Contains(result.stderr, "panic:") {
+				t.Errorf("a load failure must not panic, got:\n%s", result.stderr)
+			}
+		})
 	}
 }

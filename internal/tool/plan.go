@@ -15,26 +15,36 @@ type PlanResult struct {
 // so renderers never count them as update candidates. Invalid binaries are
 // always reported (they cannot be matched by name).
 func Plan(loadRes LoadResult, filter []string) PlanResult {
-	set := nameSet(filter)
-
-	var result PlanResult
-	for _, t := range loadRes.Tools {
-		if !selected(t.Name(), set) {
-			continue
-		}
-		if t.CanUpdate() {
-			result.ToUpdate = append(result.ToUpdate, t)
-		} else {
-			result.Skipped = append(result.Skipped, t)
-		}
-	}
+	result := PlanResult{}
+	result.ToUpdate, result.Skipped = partitionSelection(loadRes.Tools, nameSet(filter))
 	result.Invalid = append(result.Invalid, loadRes.Invalid...)
 	return result
 }
 
-// InstallRef returns the module@version reference `go install` uses to update
-// a tool. It is the single source of truth for what "updating" means, shared
-// by the execution path and by the human-readable plan command.
+// partitionSelection splits the selected tools into the ones that can be
+// updated and the ones that were selected but are ineligible (local/devel
+// builds), preserving input order. An empty name set selects every tool.
+//
+// Plan and ResolveUpdateCandidates must agree on which tools are eligible:
+// they share this function so `helm --check` and an actual update can never
+// disagree about what would change.
+func partitionSelection(tools []Tool, set map[string]bool) (eligible, skipped []Tool) {
+	for _, t := range tools {
+		if !selected(t.Name(), set) {
+			continue
+		}
+		if t.CanUpdate() {
+			eligible = append(eligible, t)
+		} else {
+			skipped = append(skipped, t)
+		}
+	}
+	return eligible, skipped
+}
+
+// InstallRef returns the floating `@latest` reference shown by --check and
+// --dry-run for eligible tools. It is display-only: executed installs pin
+// the resolved version via InstallExactRef, never this reference.
 func InstallRef(target string) string {
 	return target + "@latest"
 }

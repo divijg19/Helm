@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -67,8 +68,8 @@ func (e errorString) Error() string { return string(e) }
 
 func candidateTools() []Tool {
 	return []Tool{
-		makeOutdatedTool("hello", "example.com/hello", "v1.0.0"),
-		makeOutdatedTool("world", "example.com/world", "v1.2.0"),
+		fixtureTool("hello", "example.com/hello", "v1.0.0"),
+		fixtureTool("world", "example.com/world", "v1.2.0"),
 	}
 }
 
@@ -150,7 +151,7 @@ func TestResolveCandidates_CurrentToolReceivesZeroInstalls(t *testing.T) {
 	runner := &moduleRunner{versions: map[string]string{
 		"example.com/hello": "v1.0.0",
 	}}
-	tools := []Tool{makeOutdatedTool("hello", "example.com/hello", "v1.0.0")}
+	tools := []Tool{fixtureTool("hello", "example.com/hello", "v1.0.0")}
 
 	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)
 	if len(set.Candidates) != 0 {
@@ -183,9 +184,9 @@ func TestResolveCandidates_ResolutionFailureVetoes(t *testing.T) {
 		},
 	}
 	tools := []Tool{
-		makeOutdatedTool("foo", "example.com/foo", "v1.0.0"),
-		makeOutdatedTool("bar", "example.com/bar", "v1.0.0"),
-		makeOutdatedTool("baz", "example.com/baz", "v1.0.0"),
+		fixtureTool("foo", "example.com/foo", "v1.0.0"),
+		fixtureTool("bar", "example.com/bar", "v1.0.0"),
+		fixtureTool("baz", "example.com/baz", "v1.0.0"),
 	}
 
 	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)
@@ -211,10 +212,14 @@ func TestResolveCandidates_ResolutionFailureVetoes(t *testing.T) {
 }
 
 // TestResolveCandidates_EmptyLatestVetoes covers the degenerate resolver
-// output: Outdated without a usable version authorizes nothing.
+// output: a tool whose latest version cannot be resolved authorizes nothing
+// and is reported as failed. The failure here originates in
+// checkToolOutdated, so it carries that error rather than the defensive
+// ErrUnresolvedVersion; that branch is pinned directly by
+// TestPartitionResult_UnresolvedVersionVetoes.
 func TestResolveCandidates_EmptyLatestVetoes(t *testing.T) {
 	runner := &moduleRunner{versions: map[string]string{"example.com/foo": ""}}
-	tools := []Tool{makeOutdatedTool("foo", "example.com/foo", "v1.0.0")}
+	tools := []Tool{fixtureTool("foo", "example.com/foo", "v1.0.0")}
 
 	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)
 	if len(set.Candidates) != 0 {
@@ -222,6 +227,72 @@ func TestResolveCandidates_EmptyLatestVetoes(t *testing.T) {
 	}
 	if len(set.Failed) != 1 {
 		t.Fatalf("expected 1 failure for empty latest, got %d", len(set.Failed))
+	}
+}
+
+// TestPartitionResult_UnresolvedVersionVetoes pins the defensive
+// ErrUnresolvedVersion branch directly. It is unreachable through
+// CheckOutdated today (an unresolvable latest already fails there), so it can
+// only be exercised by handing partitionResult a result that claims Outdated
+// with an empty Latest. If CheckOutdated's contract ever changes, this test
+// still proves an outdated-but-unversioned tool can never become a candidate.
+func TestPartitionResult_UnresolvedVersionVetoes(t *testing.T) {
+	tool := fixtureTool("foo", "example.com/foo", "v1.0.0")
+	var set CandidateSet
+
+	partitionResult(&set, OutdatedResult{Tool: tool, Current: "v1.0.0", Outdated: true, Latest: ""})
+
+	if len(set.Candidates) != 0 {
+		t.Fatalf("outdated without a version must not authorize an install, got %d candidates", len(set.Candidates))
+	}
+	if len(set.Failed) != 1 {
+		t.Fatalf("expected 1 failure, got %d", len(set.Failed))
+	}
+	if !errors.Is(set.Failed[0].Error, ErrUnresolvedVersion) {
+		t.Errorf("failure error = %v, want ErrUnresolvedVersion", set.Failed[0].Error)
+	}
+	if set.Failed[0].Tool.Name() != "foo" || set.Failed[0].Current != "v1.0.0" {
+		t.Errorf("failure must retain tool provenance, got %+v", set.Failed[0])
+	}
+	if len(set.UpToDate) != 0 {
+		t.Errorf("an unresolved outdated tool must not be reported up-to-date, got %d", len(set.UpToDate))
+	}
+}
+
+// TestPartitionResult_Buckets is a table over the partition contract: every
+// result lands in exactly one bucket, and only a resolved outdated result is
+// ever installable.
+func TestPartitionResult_Buckets(t *testing.T) {
+	tool := fixtureTool("foo", "example.com/foo", "v1.0.0")
+	tests := []struct {
+		name       string
+		result     OutdatedResult
+		wantBucket string
+	}{
+		{"resolved outdated is installable", OutdatedResult{Tool: tool, Outdated: true, Latest: "v1.2.0"}, "candidates"},
+		{"current is up to date", OutdatedResult{Tool: tool, Current: "v1.0.0", Latest: "v1.0.0"}, "uptodate"},
+		{"resolution error fails", OutdatedResult{Tool: tool, Error: errors.New("boom")}, "failed"},
+		{"outdated without version fails", OutdatedResult{Tool: tool, Outdated: true, Latest: ""}, "failed"},
+		{"error outranks outdated", OutdatedResult{Tool: tool, Outdated: true, Latest: "v1.2.0", Error: errors.New("boom")}, "failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var set CandidateSet
+			partitionResult(&set, tt.result)
+			got := map[string]int{
+				"candidates": len(set.Candidates),
+				"uptodate":   len(set.UpToDate),
+				"failed":     len(set.Failed),
+			}
+			if got[tt.wantBucket] != 1 {
+				t.Errorf("result landed as %v, want exactly 1 in %q", got, tt.wantBucket)
+			}
+			for bucket, n := range got {
+				if bucket != tt.wantBucket && n != 0 {
+					t.Errorf("result also landed in %q (%d entries); buckets must be exclusive", bucket, n)
+				}
+			}
+		})
 	}
 }
 
@@ -291,7 +362,7 @@ func TestResolveCandidates_PreCancelledContextVetoes(t *testing.T) {
 func TestUpdateCandidates_ExactVersionNoFallback(t *testing.T) {
 	runner := &moduleRunner{installErr: errorString("simulated install failure")}
 	candidates := []UpdateCandidate{
-		{Tool: makeOutdatedTool("foo", "example.com/foo", "v1.0.0"), Version: "v1.4.2"},
+		{Tool: fixtureTool("foo", "example.com/foo", "v1.0.0"), Version: "v1.4.2"},
 	}
 
 	results, _, _ := UpdateCandidates(context.Background(), candidates, runner, nil)
@@ -301,8 +372,8 @@ func TestUpdateCandidates_ExactVersionNoFallback(t *testing.T) {
 	if results[0].Success {
 		t.Errorf("expected install failure, got success")
 	}
-	if results[0].Status != StatusFailed {
-		t.Errorf("expected StatusFailed, got %v", results[0].Status)
+	if results[0].Error == nil {
+		t.Error("a failed install must carry the error, since the non-terminal renderers report it as the failure reason")
 	}
 	if got := runner.installCalls(); got != 1 {
 		t.Fatalf("expected exactly 1 install attempt (no fallback), got %d", got)
@@ -321,7 +392,7 @@ func TestUpdateCandidates_ExactVersionNoFallback(t *testing.T) {
 // unaffected. Unselected tools appear in no bucket.
 func TestResolveCandidates_SkippedLocals(t *testing.T) {
 	runner := &moduleRunner{versions: candidateVersions()}
-	tools := append(candidateTools(), makeOutdatedTool("localdev", "example.com/localdev", "(devel)"))
+	tools := append(candidateTools(), fixtureTool("localdev", "example.com/localdev", "(devel)"))
 
 	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)
 	if !equalNames(set.Skipped, "localdev") {
@@ -342,14 +413,10 @@ func TestResolveCandidates_SkippedLocals(t *testing.T) {
 	}
 }
 
-// TestInstallExactRef pins the exact-reference construction shared by the
-// update phase; InstallRef (floating @latest) intentionally remains the
-// --check/--dry-run display rule (see plan_test.go).
-func TestInstallExactRef(t *testing.T) {
-	if got := InstallExactRef("example.com/foo/cmd/foo", "v1.4.2"); got != "example.com/foo/cmd/foo@v1.4.2" {
-		t.Errorf("InstallExactRef = %q, want example.com/foo/cmd/foo@v1.4.2", got)
-	}
-}
+// TestInstallExactRef was removed: InstallExactRef is asserted by
+// TestInstallDisplayVsExecutionReferences in plan_test.go, which pins the
+// exact reference and the distinction from the floating @latest display rule
+// in one place.
 
 // TestResolveCandidates_SameModuleSharesResolvedVersion pins the invariant
 // behind installation-tree module headers: tools from one module resolve
@@ -359,8 +426,8 @@ func TestInstallExactRef(t *testing.T) {
 func TestResolveCandidates_SameModuleSharesResolvedVersion(t *testing.T) {
 	runner := &moduleRunner{versions: map[string]string{"example.com/suite": "v1.5.0"}}
 	tools := []Tool{
-		makeOutdatedTool("toolA", "example.com/suite", "v1.0.0"),
-		makeOutdatedTool("toolB", "example.com/suite", "v1.0.0"),
+		fixtureTool("toolA", "example.com/suite", "v1.0.0"),
+		fixtureTool("toolB", "example.com/suite", "v1.0.0"),
 	}
 
 	set := ResolveUpdateCandidates(context.Background(), tools, nil, runner)

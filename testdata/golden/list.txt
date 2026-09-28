@@ -29,4 +29,4 @@ Summary
 Healthy       2
 Local         1
 Invalid       1
-Unhealthy     1
+Unhealthy     0

@@ -19,7 +19,7 @@ type VerificationResult struct {
 var executablePolicy = isExecutable
 
 func Verify(tools []Tool) []VerificationResult {
-	var results []VerificationResult
+	results := make([]VerificationResult, 0, len(tools))
 	for _, t := range tools {
 		res := VerificationResult{Tool: t}
 

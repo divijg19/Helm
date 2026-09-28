@@ -10,7 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/testutil"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 // TestNewAppPropagatesGobinResolutionError proves the first link of the
@@ -42,6 +43,9 @@ func TestNewAppPropagatesGobinResolutionError(t *testing.T) {
 // TestInventoryReport_ConservesTools pins the inventory conservation
 // invariant: every discovered tool lands in exactly one of Healthy, Local,
 // or Unhealthy, so the summary counts always reconcile with the tool list.
+// Invalid binaries are a separate bucket and must not be folded into
+// Unhealthy, which would break that invariant and double-count the issue
+// total every renderer reports.
 func TestInventoryReport_ConservesTools(t *testing.T) {
 	dir := t.TempDir()
 	writeExec := func(name string) string {
@@ -65,14 +69,32 @@ func TestInventoryReport_ConservesTools(t *testing.T) {
 		tool.NewTool("local", writeExec("local"), local),
 		tool.NewTool("missing", filepath.Join(dir, "missing"), updatable),
 	}
+	invalid := []tool.InvalidBinary{
+		{Path: filepath.Join(dir, "notgo"), Error: tool.ErrMissingBuildInfo},
+		{Path: filepath.Join(dir, "nopath"), Error: tool.ErrMissingPackagePath},
+	}
 
-	report := (&App{}).inventoryReport(tool.LoadResult{Tools: tools})
+	report := (&App{}).inventoryReport(tool.LoadResult{Tools: tools, Invalid: invalid})
 
 	if report.Summary.Healthy != 1 || report.Summary.Local != 1 || report.Summary.Unhealthy != 1 {
 		t.Errorf("summary = %+v, want {Healthy:1 Local:1 Unhealthy:1}", report.Summary)
 	}
+	if report.Summary.Invalid != len(invalid) {
+		t.Errorf("summary.Invalid = %d, want %d", report.Summary.Invalid, len(invalid))
+	}
 	if total := report.Summary.Healthy + report.Summary.Local + report.Summary.Unhealthy; total != len(tools) {
-		t.Errorf("summary total = %d, want %d (one bucket per tool)", total, len(tools))
+		t.Errorf("summary total = %d, want %d (one bucket per tool, invalid binaries excluded)", total, len(tools))
+	}
+	if len(report.Invalid) != len(invalid) {
+		t.Errorf("report.Invalid = %d entries, want %d", len(report.Invalid), len(invalid))
+	}
+	if report.Success {
+		t.Error("report.Success = true, want false when unhealthy tools and invalid binaries are present")
+	}
+	// The renderers report Unhealthy+Invalid as the issue total, so this is
+	// the number a user sees. Invalid binaries must be counted exactly once.
+	if got, want := report.Summary.Unhealthy+report.Summary.Invalid, 1+len(invalid); got != want {
+		t.Errorf("issue total = %d, want %d", got, want)
 	}
 	got := map[string]string{}
 	for _, item := range report.Tools {
@@ -208,6 +230,14 @@ func TestOutdatedReport_ResolutionFailuresAreNotUpToDate(t *testing.T) {
 	if report.Summary.Outdated != 1 || report.Summary.UpToDate != 1 || report.Summary.Failed != 1 {
 		t.Errorf("summary = %+v, want {Outdated:1 UpToDate:1 Failed:1}", report.Summary)
 	}
+	// Total is what both human renderers print as "Checked", so it must equal
+	// the number of results and reconcile with the three buckets.
+	if report.Summary.Total != len(report.Results) {
+		t.Errorf("Summary.Total = %d, want len(Results) = %d", report.Summary.Total, len(report.Results))
+	}
+	if sum := report.Summary.Outdated + report.Summary.UpToDate + report.Summary.Failed; sum != report.Summary.Total {
+		t.Errorf("Outdated+UpToDate+Failed = %d, want Total = %d", sum, report.Summary.Total)
+	}
 	if report.Success {
 		t.Error("report must be unsuccessful while any resolution failed")
 	}
@@ -250,5 +280,85 @@ func TestUpdateReport_DuplicateResultsKeepFirstMatch(t *testing.T) {
 	}
 	if got := report.UpdatedDetail[0].Previous; got != "v1.0.0" {
 		t.Errorf("UpdatedDetail[0].Previous = %q, want v1.0.0 from the first matching result", got)
+	}
+}
+
+// TestUpdateReport_FailedDetailFromRealInstallFailure proves the report
+// builder carries an install failure's cause through from the tool layer,
+// which is the only place the reason exists for non-terminal renderers.
+func TestUpdateReport_FailedDetailFromRealInstallFailure(t *testing.T) {
+	failing := makeTool("world", "example.com/world", "v1.2.0")
+	set := tool.CandidateSet{
+		Candidates: []tool.UpdateCandidate{{Tool: failing, Version: "v1.3.0"}},
+	}
+	results := []tool.ToolUpdateResult{
+		{Tool: failing, Success: false, Error: errors.New("go: module lookup disabled")},
+	}
+
+	report := (&App{}).updateReport(results, tool.LoadResult{}, set, 0, nil)
+
+	if len(report.Failed) != 1 || report.Failed[0] != "world" {
+		t.Fatalf("Failed = %v, want [world]", report.Failed)
+	}
+	if len(report.FailedDetail) != 1 {
+		t.Fatalf("FailedDetail = %+v, want exactly 1 entry", report.FailedDetail)
+	}
+	if report.FailedDetail[0].Name != "world" || report.FailedDetail[0].Error != "go: module lookup disabled" {
+		t.Errorf("FailedDetail[0] = %+v, want the tool name and install error", report.FailedDetail[0])
+	}
+	if report.Success {
+		t.Error("a failed install must make the report unsuccessful")
+	}
+	if err := report.Err(); err == nil || err.Error() != "1 update failed" {
+		t.Errorf("Err() = %v, want 1 update failed", err)
+	}
+
+	// A result with no error still appears in Failed without a fabricated cause.
+	bare := (&App{}).updateReport([]tool.ToolUpdateResult{{Tool: failing}}, tool.LoadResult{}, set, 0, nil)
+	if len(bare.Failed) != 1 || len(bare.FailedDetail) != 0 {
+		t.Errorf("a failure without an error must list the name only, got %+v / %+v", bare.Failed, bare.FailedDetail)
+	}
+}
+
+// TestAppLoadIsMemoized proves a second load() returns the identical result
+// without re-reading the directory. App.load backs every operation, so a
+// regression that dropped the cache would re-run `go env` and a full GOBIN
+// read per call, doubling startup work with no visible symptom. It also
+// proves a failed load is never memoized, which would otherwise make a later
+// retry silently succeed with an empty result set.
+func TestAppLoadIsMemoized(t *testing.T) {
+	f := testutil.NewFixture(t)
+	a := &App{Gobin: f.GobinDir}
+
+	first, err := a.load()
+	if err != nil {
+		t.Fatalf("first load failed: %v", err)
+	}
+	if len(first.Tools) == 0 {
+		t.Fatal("fixture must yield at least one loadable tool")
+	}
+	if !a.loadResValid {
+		t.Error("a successful load must be memoized")
+	}
+
+	second, err := a.load()
+	if err != nil {
+		t.Fatalf("second load failed: %v", err)
+	}
+	if len(second.Tools) != len(first.Tools) {
+		t.Errorf("memoized load returned %d tools, want the first load's %d", len(second.Tools), len(first.Tools))
+	}
+	for i := range first.Tools {
+		if second.Tools[i].Name() != first.Tools[i].Name() {
+			t.Errorf("tool %d = %q on reload, want %q (order and identity must be stable)", i, second.Tools[i].Name(), first.Tools[i].Name())
+		}
+	}
+
+	missing := &App{Gobin: filepath.Join(f.GobinDir, "nope")}
+	if _, err := missing.load(); err == nil {
+		t.Error("expected an error for a non-existent GOBIN")
+	}
+	if missing.loadResValid {
+		t.Error("a failed load must not be memoized")
 	}
 }

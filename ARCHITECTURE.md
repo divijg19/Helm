@@ -6,7 +6,7 @@ This document describes Helm's durable structure and current invariants.
 
 ```text
 cmd/helm/         Canonical executable entrypoint.
-internal/cli/     Invocation resolution, flags, operations, and exit codes.
+internal/cli/     Flag parsing, operation dispatch, and exit codes.
 internal/app/     Application orchestration and renderer coordination.
 internal/tool/    Discovery, inspection, planning, updates, and outdated checks.
 internal/testutil/ Hermetic fixture and offline test support.
@@ -15,26 +15,38 @@ internal/testutil/ Hermetic fixture and offline test support.
 ## Execution Flow
 
 ```text
-invocation
+invocation (the invoked basename is not inspected; every alias behaves alike)
     ↓
-ResolveInvocation
+flag parsing → --help / --version answer here (before the toolchain is touched)
     ↓
-environment resolution
+environment resolution (GOBIN/GOPATH) → App construction
     ↓
-App construction
+discarded-flag warnings (stderr only)
     ↓
 tool discovery and loading
+    ↓
+usage validation (unknown filters, positional scope) → ExitUsage
+    ↓
+--info target resolution (operational failure) → ExitFailure
+    ↓
+discovery header (suppressed by --json / --quiet)
     ↓
 operation
     ├── list
     ├── plan (--check / --dry-run)
     ├── outdated
+    ├── info (exactly one target)
     └── update (selection → outdated resolution → exact-version install)
     ↓
-rendering
-    ↓
-exit
+report rendering → operation Err() → exit code
 ```
+
+`--help` and `--version` are answered before environment resolution on
+purpose: they must keep working in exactly the broken-toolchain state a user
+would reach for them in. Everything after flag parsing needs a working `go` on
+`PATH`, so a resolution failure there is `ExitEnv` (3) rather than a usage
+error. Validation sits between loading and rendering so a rejected invocation
+never produces partial output.
 
 The default update operation is outdated-first: it resolves the selected
 updatable tools with the same bounded-concurrency outdated check that backs
@@ -47,13 +59,16 @@ operation, so update resolves within its own invocation. Installation stays
 sequential while outdated resolution stays bounded-concurrent.
 
 The supported invocation names are `helm`, `Helm`, and `update-go-tools`.
-They all execute through `cmd/helm`; there are no alias-specific executable
-implementations.
+They are all symlinks or copies of the one binary and are not distinguished:
+the CLI never reads the invoked basename, so every name must behave
+identically. `TestAliasUpdateGoToolsMatchesHelm` and
+`TestAliasUpperCaseHelmMatchesHelm` in `cmd/helm` guard that, so per-name
+dispatch cannot be reintroduced unnoticed.
 
 ## Boundaries
 
-The CLI owns process-facing concerns: invocation names, flags, renderer mode,
-and exit-code mapping. The application package sequences operations and passes
+The CLI owns process-facing concerns: flags, renderer mode, and exit-code
+mapping. The application package sequences operations and passes
 reports to renderers. The tool package owns domain behavior and does not know
 about terminal formatting.
 
@@ -67,19 +82,16 @@ instance. The memoization is invocation-local, not a persistent cache.
 ## Invariants
 
 - There is one executable implementation in `cmd/helm`.
-- Discovery is sorted before reports are produced; the installation tree
-  additionally groups by module and sorts modules and children by name.
+- Discovery is sorted before reports are produced; the terminal
+  installation tree additionally groups by module and sorts modules and
+  children by name (CI, quiet, and JSON render the same installations
+  flat or not at all).
 - Discovery scans a single GOBIN level: subdirectories are skipped, file
   symlinks are followed, and a symlink to a directory lands in Invalid
   rather than being traversed. Entry names cannot escape the directory.
 - `--check` and `--dry-run` share one planning path.
-- Tool-name filters apply to updates and plans; `--list` and `--outdated`
-  take no tool names and `--info` takes exactly one. Unknown names are
-  usage errors, reported before any output.
-- Flags an invocation discards (plan flags with explicit operations,
-  `--verbose` with JSON/quiet output, shadowed output modes) print a
-  `Warning:` to stderr without changing the outcome. Output modes resolve
-  by precedence `--json` over `--ci` over `--quiet`.
+- Filter scope and discarded-flag warnings follow the CLI dispatch contract
+  (`internal/cli/cli.go`); README and `--help` carry the user wording.
 - `Plan` owns update selection; renderers do not re-derive it.
 - `InstallRef` and `InstallCommand` describe the update rule shown by
   `--check`/`--dry-run` for eligible tools (`<package>@latest`); executed
@@ -93,11 +105,18 @@ instance. The memoization is invocation-local, not a persistent cache.
   `--info` is the exception: it emits a bare tool report with no operation
   envelope.
 - Inventory counts reconcile: every discovered tool is Healthy, Local, or
-  Unhealthy, with invalid binaries listed separately. `Skipped` means the
-  same in plans and updates: selected but ineligible tools plus invalid
-  binaries. Human and CI renderers use stable report ordering and summary structure.
+  Unhealthy, so those three always sum to the number of loaded tools. (The
+  header's `Executables` is larger: it counts every GOBIN entry, including the
+  invalid binaries, so the two totals are deliberately not additive.)
+  Invalid binaries are counted only in `Summary.Invalid` and are never folded
+  into `Unhealthy`; renderers add `Unhealthy + Invalid` for the issue total, so
+  each problem is counted exactly once. `Skipped` means the same in plans and
+  updates: selected but ineligible tools plus invalid binaries, and both
+  operations build that list with one shared helper. Human and CI renderers
+  use stable report ordering and summary structure.
 - Environment-resolution errors wrap `tool.ErrGobinResolution` and map to
-  `ExitEnv`; generic application failures map to `ExitFailure`.
+  `ExitEnv`; generic application failures map to `ExitFailure`. `--help` and
+  `--version` precede environment resolution entirely.
 
 ## Rendering
 
@@ -105,10 +124,17 @@ The renderer interface covers headers and operation reports for inventory,
 planning, outdated checks, updates, and tool information. Terminal, JSON,
 quiet, and CI renderers implement presentation without owning business rules.
 
-Progress streams verbatim toolchain output under the installing tool; only
-the terminal renderer displays it live, while notes persist it for terminal
-and JSON reports. Fetch events are never filtered and never classified as
-diagnostics.
+Progress streams the toolchain's own output under the installing tool,
+unmodified apart from surrounding whitespace and with blank lines omitted.
+Only TerminalRenderer implements ProgressSink, so only the terminal emits it
+live; because the live subtree is the record, installTool drops the captured
+lines from a successful completion event instead of repeating them. The
+report-level `notes` field is a list of tool *names* that were successfully
+updated and produced output (CI prints them as `note: <name>`, JSON as a
+string array, quiet omits them), never a copy of the text; the terminal
+prints no notes section at all. A failed install keeps its error and captured
+output only in the terminal's live stream. Fetch events are never filtered
+and never classified as diagnostics.
 
 JSON is available for every operation. Its stable operation names are `list`,
 `check`, `update`, and `outdated`.
@@ -117,4 +143,27 @@ Machine consumers should note what JSON omits by design: the outdated
 summary and the update-only `UpdatedDetail`, `Diagnostics`, and `Duration`
 fields are excluded from serialization, so outdated counts must be derived
 from the result arrays and `success` flags rather than expected as JSON keys.
-Inventory reports serialize in full, including per-tool status and summary.
+`Notes` and `FailedDetail` are `omitempty`, so a clean update emits neither
+key. Inventory reports serialize in full, including per-tool status and summary.
+`--info` is narrower than the human view on purpose: `ToolReport` carries only
+`name`, `version`, `package_path`, and `module_path`, while the terminal and
+CI renderers additionally show the Go version the tool was built with, its
+install path, and whether it can be updated. Do not expect `go-version`,
+`path`, or `can-update` keys from `--info --json`.
+
+Update failures are reported at two levels so no mode loses the reason:
+`failed` lists every tool whose install did not succeed, and
+`failed_detail` pairs each such tool with its error. The CI renderer prints
+the pair as `failed: <name>` plus `failed-reason: <name>: <error>`, quiet
+prints one combined `failed: <name>: <error>` line on stderr, and JSON
+carries the array. The terminal deliberately does not repeat the cause,
+because it already streamed it live under the installing tool. Resolution
+failures are a separate class and arrive as `diagnostics` instead.
+
+Every fallible operation has exactly one success/failure decision, expressed
+as `Err()` on the report type (`InventoryReport`, `OutdatedReport`,
+`UpdateReport`). All four renderers return that error, and the report
+builders derive the JSON `success` flag from the same condition, so the
+exit code, the stderr message, and `success` cannot disagree. Planning is
+the exception: it executes no subprocess and cannot fail, so `PlanReport`
+has no `Err()` and its `success` is unconditionally true.

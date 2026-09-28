@@ -7,12 +7,12 @@ import (
 	"os"
 	"strings"
 
-	"helm/internal/app"
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/app"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 var (
-	version    = "v1.9.0"
+	version    = "v2.0.0"
 	commitHash = ""
 	buildDate  = ""
 )
@@ -23,29 +23,6 @@ const (
 	ExitUsage   = 2
 	ExitEnv     = 3
 )
-
-// Invocation identifies how the canonical Helm executable was invoked.
-//
-// Executable identity is resolved at the CLI boundary from the process
-// basename and must not leak into the application or domain layers.
-type Invocation struct {
-	// Name is the invocation basename, e.g. "helm" or "update-go-tools".
-	Name string
-}
-
-// ResolveInvocation maps an executable basename to its invocation identity.
-//
-// Supported names:
-//
-//	helm, Helm         -> canonical Helm behavior
-//	update-go-tools    -> preserved compatibility alias
-//
-// Any other name defaults to canonical Helm behavior. Case is matched only for
-// the explicitly supported canonical spellings; arbitrary variants such as
-// "HELM" are not normalized.
-func ResolveInvocation(rawName string) Invocation {
-	return Invocation{Name: rawName}
-}
 
 type cliOptions struct {
 	jsonOutput bool
@@ -62,22 +39,37 @@ type cliOptions struct {
 // defaults to app.NewApp.
 var newApp = app.NewApp
 
-func Run(inv Invocation, args []string) int {
+// Run executes one CLI invocation and returns its process exit code.
+//
+// All supported names (`helm`, `Helm`, `update-go-tools`) are the same
+// executable copied under different names, so the invoked basename is not
+// inspected: there is no per-name dispatch, and every name must behave
+// identically. TestAliasUpdateGoToolsMatchesHelm in cmd/helm guards that.
+func Run(args []string) int {
 	ctx := context.Background()
 	opts, code := parseFlags(args)
 	if code != 0 {
 		return code
 	}
 
-	mode := app.ModeTerminal
-	switch {
-	case opts.jsonOutput:
-		mode = app.ModeJSON
-	case opts.ci:
-		mode = app.ModeCI
-	case opts.quiet:
-		mode = app.ModeQuiet
+	operation, toolArgs := splitOperation(opts.positional)
+
+	// --help and --version answer before anything touches the toolchain.
+	// Building the App shells out to `go env` to resolve GOBIN, so deferring
+	// these until after that would make the two flags that exist to help a
+	// user with a broken environment fail with the same environment error
+	// (exit 3) and print nothing at all. Flag parsing still runs first, so
+	// an unknown flag is still a usage error regardless of --help.
+	switch operation {
+	case "--help", "-h":
+		printHelp()
+		return ExitSuccess
+	case "--version", "-v":
+		printVersion()
+		return ExitSuccess
 	}
+
+	mode, activeModes := resolveOutputMode(opts)
 
 	renderer := app.NewRenderer(mode, opts.verbose)
 	application, err := newApp(renderer, tool.DefaultRunner{})
@@ -88,18 +80,7 @@ func Run(inv Invocation, args []string) int {
 		return fail("Error:", err)
 	}
 
-	operation, toolArgs := splitOperation(opts.positional)
-
-	switch operation {
-	case "--help", "-h":
-		printHelp()
-		return ExitSuccess
-	case "--version", "-v":
-		printVersion()
-		return ExitSuccess
-	}
-
-	warnUnusedModifiers(opts, operation, mode)
+	warnUnusedModifiers(opts, operation, mode, activeModes)
 
 	// Every remaining operation loads the tool set once and renders the
 	// discovery header before dispatch. Both the explicit-operation path and
@@ -141,6 +122,15 @@ func Run(inv Invocation, args []string) int {
 	if operation == "--info" && len(toolArgs) == 0 {
 		fmt.Fprintln(os.Stderr, "Error: Option --info requires a tool name.")
 		return ExitUsage
+	}
+	// The target must also resolve before anything renders: an unknown tool
+	// is an operational failure with an empty stdout, matching every other
+	// invalid invocation. RunInfo re-checks at dispatch and reports the
+	// same error, so this pre-check changes only when output appears.
+	if operation == "--info" {
+		if _, err := app.LookupTool(loadRes, toolArgs[0]); err != nil {
+			return fail("Error:", err)
+		}
 	}
 
 	renderHeader(ctx, application, renderer, loadRes, mode)
@@ -220,10 +210,38 @@ func splitOperation(positional []string) (string, []string) {
 	return "", positional
 }
 
+// resolveOutputMode selects the effective output mode by precedence
+// (json > ci > quiet > terminal) and returns the requested mode flags in
+// that same order, so warnings name the shadowed flags without re-deriving
+// the precedence rule.
+func resolveOutputMode(opts cliOptions) (app.RenderMode, []string) {
+	type modeFlag struct {
+		set  bool
+		flag string
+		mode app.RenderMode
+	}
+	var active []string
+	mode := app.ModeTerminal
+	for _, mf := range []modeFlag{
+		{opts.jsonOutput, "--json", app.ModeJSON},
+		{opts.ci, "--ci", app.ModeCI},
+		{opts.quiet, "--quiet", app.ModeQuiet},
+	} {
+		if !mf.set {
+			continue
+		}
+		if active == nil {
+			mode = mf.mode
+		}
+		active = append(active, mf.flag)
+	}
+	return mode, active
+}
+
 // warnUnusedModifiers tells the user about flags the requested invocation
 // silently discards, instead of pretending they applied. Warnings never
 // change the exit status; the operation proceeds as documented.
-func warnUnusedModifiers(opts cliOptions, operation string, mode app.RenderMode) {
+func warnUnusedModifiers(opts cliOptions, operation string, mode app.RenderMode, activeModes []string) {
 	if opts.plan && operation != "" {
 		fmt.Fprintf(os.Stderr, "Warning: --check/--dry-run has no effect with %s.\n", operation)
 	}
@@ -233,19 +251,9 @@ func warnUnusedModifiers(opts cliOptions, operation string, mode app.RenderMode)
 	if opts.verbose && mode == app.ModeQuiet {
 		fmt.Fprintln(os.Stderr, "Warning: --verbose has no effect with --quiet.")
 	}
-	set := make([]string, 0, 3)
-	if opts.jsonOutput {
-		set = append(set, "--json")
-	}
-	if opts.ci {
-		set = append(set, "--ci")
-	}
-	if opts.quiet {
-		set = append(set, "--quiet")
-	}
-	// Output modes resolve by precedence json > ci > quiet; name the losers.
-	if len(set) > 1 {
-		fmt.Fprintf(os.Stderr, "Warning: %s ignored; %s takes precedence.\n", strings.Join(set[1:], " and "), set[0])
+	// The first active mode wins; the rest are reported as shadowed.
+	if len(activeModes) > 1 {
+		fmt.Fprintf(os.Stderr, "Warning: %s ignored; %s takes precedence.\n", strings.Join(activeModes[1:], " and "), activeModes[0])
 	}
 }
 
@@ -292,14 +300,14 @@ func printHelp() {
 Usage:
     helm [tool...]
     helm --list [--json|--ci|--quiet]
-    helm --check/--dry-run [--verbose|-V]
-    helm --outdated [--json|--ci]
+    helm --check/--dry-run [--verbose|-V] [--json|--ci|--quiet]
+    helm --outdated [--json|--ci|--quiet]
     helm --info <tool>
     helm --json
     helm --quiet | -q
     helm --ci
-    helm --help
-    helm --version
+    helm --help | -h
+    helm --version | -v
 
 Operations:
     --list             List all Go-managed tools with versions, health status, and packages
