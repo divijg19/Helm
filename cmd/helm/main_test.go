@@ -598,6 +598,9 @@ func TestInfoNoName(t *testing.T) {
 	if result.code != 2 {
 		t.Errorf("exit code: expected 2 (usage error), got %d", result.code)
 	}
+	if strings.TrimSpace(result.stdout) != "" {
+		t.Errorf("usage error must render no report on stdout, got:\n%s", result.stdout)
+	}
 }
 
 // TestExplicitOpsRejectPositionals pins the v1.9.5 filter-scope contract:
