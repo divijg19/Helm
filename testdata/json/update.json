@@ -7,6 +7,9 @@
   "up_to_date": [
     "hello"
   ],
+  "notes": [
+    "world"
+  ],
   "skipped": [
     "localdev",
     "<TMP>/gobin/notgo"

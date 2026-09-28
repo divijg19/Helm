@@ -105,6 +105,11 @@ The renderer interface covers headers and operation reports for inventory,
 planning, outdated checks, updates, and tool information. Terminal, JSON,
 quiet, and CI renderers implement presentation without owning business rules.
 
+Progress streams verbatim toolchain output under the installing tool; only
+the terminal renderer displays it live, while notes persist it for terminal
+and JSON reports. Fetch events are never filtered and never classified as
+diagnostics.
+
 JSON is available for every operation. Its stable operation names are `list`,
 `check`, `update`, and `outdated`.
 

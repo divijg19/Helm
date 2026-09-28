@@ -5,6 +5,7 @@ import (
 	"debug/buildinfo"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -39,6 +40,18 @@ func makeTool(name, pkg, version string) tool.Tool {
 		Path: pkg + "/cmd/" + name,
 		Main: debug.Module{Path: pkg, Version: version},
 	})
+}
+
+func TestColumnWidths(t *testing.T) {
+	if got := columnWidths([]int{4, 7}, []string{"hello", "v1.0.0"}, []string{"worldwide", "v1.2.0"}); !reflect.DeepEqual(got, []int{9, 7}) {
+		t.Errorf("columnWidths = %v, want [9 7] (max wins, floor holds)", got)
+	}
+	if got := columnWidths([]int{16}, []string{"hi"}); !reflect.DeepEqual(got, []int{16}) {
+		t.Errorf("columnWidths = %v, want [16] (floor holds for short cells)", got)
+	}
+	if got := columnWidths([]int{4, 7}); !reflect.DeepEqual(got, []int{4, 7}) {
+		t.Errorf("columnWidths with no rows = %v, want minimums", got)
+	}
 }
 
 func TestTerminalUpdate_ClassesStatusCorrectly(t *testing.T) {

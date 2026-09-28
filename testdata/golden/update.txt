@@ -15,7 +15,10 @@ Updatable tools:
 Skipping local development binaries:
   • localdev
 
-[01/01] world              v1.2.0 → v1.3.0           ✓
+[01/01] world              v1.2.0 → v1.3.0  go: downloading example.com/world v1.3.0
+           ⓘ
+  Package    example.com/world
+  go: downloading example.com/world v1.3.0
 
 Skipped
 
