@@ -3,7 +3,8 @@ package tool
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strings"
 )
 
 func discover(gobin string) ([]candidate, error) {
@@ -20,7 +21,7 @@ func discoverWithPolicy(gobin string, executable func(name string, mode os.FileM
 		return nil, err
 	}
 
-	var candidates []candidate
+	candidates := make([]candidate, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -38,8 +39,8 @@ func discoverWithPolicy(gobin string, executable func(name string, mode os.FileM
 		})
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].name < candidates[j].name
+	slices.SortFunc(candidates, func(a, b candidate) int {
+		return strings.Compare(a.name, b.name)
 	})
 
 	return candidates, nil

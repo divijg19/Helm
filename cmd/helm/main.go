@@ -2,12 +2,10 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 
-	"helm/internal/cli"
+	"github.com/divijg19/Helm/internal/cli"
 )
 
 func main() {
-	inv := cli.ResolveInvocation(filepath.Base(os.Args[0]))
-	os.Exit(cli.Run(inv, os.Args[1:]))
+	os.Exit(cli.Run(os.Args[1:]))
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 type App struct {
@@ -56,23 +56,23 @@ func (a *App) RunInventory() error {
 }
 
 func (a *App) inventoryReport(loadRes tool.LoadResult) InventoryReport {
+	// Verify returns exactly one result per input tool, in input order, with no
+	// filtering, so results[i] describes tools[i] and no name lookup is
+	// needed. Indexing rather than keying by name also removes any dependence
+	// on tool names being unique.
 	verifyResults := tool.Verify(loadRes.Tools)
-	verifyMap := make(map[string]tool.VerificationResult)
-	for _, vr := range verifyResults {
-		verifyMap[vr.Tool.Name()] = vr
-	}
 
-	var items []ToolInventoryItem
+	items := make([]ToolInventoryItem, 0, len(loadRes.Tools))
 	healthy := 0
 	localCount := 0
 	unhealthy := 0
 
-	for _, t := range loadRes.Tools {
-		vr, ok := verifyMap[t.Name()]
-		status := "Healthy"
+	for i, t := range loadRes.Tools {
+		vr := verifyResults[i]
+		status := statusHealthy
 		errStr := ""
-		if ok && !vr.Healthy {
-			status = "Unhealthy"
+		if !vr.Healthy {
+			status = statusUnhealthy
 			errStr = vr.Error
 			unhealthy++
 		} else if !t.CanUpdate() {
@@ -80,7 +80,7 @@ func (a *App) inventoryReport(loadRes tool.LoadResult) InventoryReport {
 			// healthy-updatable nor unhealthy, so they must not inflate
 			// either count. Conservation: len(Tools) ==
 			// Healthy + Local + Unhealthy.
-			status = "Local"
+			status = statusLocal
 			localCount++
 		} else {
 			healthy++
@@ -96,10 +96,10 @@ func (a *App) inventoryReport(loadRes tool.LoadResult) InventoryReport {
 		})
 	}
 
-	for range loadRes.Invalid {
-		unhealthy++
-	}
-
+	// Invalid binaries are counted only in Summary.Invalid. Folding them into
+	// Unhealthy as well would break the conservation invariant above and make
+	// every renderer report the same problem twice, since they already sum
+	// Unhealthy + Invalid for the failure message.
 	return InventoryReport{
 		OperationEnvelope: OperationEnvelope{
 			Operation: OperationList,
@@ -117,7 +117,7 @@ func (a *App) inventoryReport(loadRes tool.LoadResult) InventoryReport {
 }
 
 func (a *App) invalidReports(invalids []tool.InvalidBinary) []InvalidReport {
-	var reps []InvalidReport
+	reps := make([]InvalidReport, 0, len(invalids))
 	for _, inv := range invalids {
 		reps = append(reps, InvalidReport{
 			Path:    inv.Path,
@@ -174,6 +174,7 @@ func (a *App) outdatedReport(outdatedRes []tool.OutdatedResult) OutdatedReport {
 		},
 		Results: outReports,
 		Summary: OutdatedSummary{
+			Total:    len(outReports),
 			Outdated: outdatedCount,
 			UpToDate: upToDateCount,
 			Failed:   failedCount,
@@ -203,6 +204,21 @@ func (a *App) RunPlan(ctx context.Context, args []string) error {
 	return a.Renderer.Plan(report)
 }
 
+// skippedNames builds the shared skipped list used by both the plan and the
+// update report: selected but ineligible tools first (by tool name), then
+// invalid binaries (by filesystem path, since they have no tool name). Plan
+// and update must agree on this composition, so they share one builder.
+func skippedNames(skipped []tool.Tool, invalid []tool.InvalidBinary) []string {
+	names := make([]string, 0, len(skipped)+len(invalid))
+	for _, t := range skipped {
+		names = append(names, t.Name())
+	}
+	for _, inv := range invalid {
+		names = append(names, inv.Path)
+	}
+	return names
+}
+
 func (a *App) planReport(plan tool.PlanResult) PlanReport {
 	toUpdate := make([]PlanItem, 0, len(plan.ToUpdate))
 	for _, t := range plan.ToUpdate {
@@ -214,12 +230,10 @@ func (a *App) planReport(plan tool.PlanResult) PlanReport {
 		})
 	}
 
-	skipped := make([]PlanItem, 0, len(plan.Skipped)+len(plan.Invalid))
-	for _, t := range plan.Skipped {
-		skipped = append(skipped, PlanItem{Name: t.Name()})
-	}
-	for _, inv := range plan.Invalid {
-		skipped = append(skipped, PlanItem{Name: inv.Path})
+	names := skippedNames(plan.Skipped, plan.Invalid)
+	skipped := make([]PlanItem, 0, len(names))
+	for _, name := range names {
+		skipped = append(skipped, PlanItem{Name: name})
 	}
 
 	return PlanReport{
@@ -238,9 +252,13 @@ func (a *App) RunUpdate(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// Only the terminal renderer streams live progress; the other three
+	// implement no ProgressSink, so onProgress stays nil and the captured
+	// output is never emitted live. Those modes keep only the tool name in
+	// the report's notes, not the text itself.
 	var onProgress func(tool.Progress)
-	if termRend, ok := a.Renderer.(interface{ OnProgress(tool.Progress) }); ok {
-		onProgress = termRend.OnProgress
+	if sink, ok := a.Renderer.(ProgressSink); ok {
+		onProgress = sink.OnProgress
 	}
 
 	// Outdated-first update: resolve the selected updatable tools, then install
@@ -255,10 +273,11 @@ func (a *App) RunUpdate(ctx context.Context, args []string) error {
 }
 
 func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadResult, set tool.CandidateSet, duration time.Duration, diagnostics []tool.Diagnostic) UpdateReport {
-	updated := make([]string, 0)
-	notes := make([]string, 0)
-	failed := make([]string, 0)
-	updatedDetail := make([]UpdatedToolDetail, 0)
+	updated := make([]string, 0, len(results))
+	notes := make([]string, 0, len(results))
+	failed := make([]string, 0, len(results))
+	failedDetail := make([]ToolFailure, 0, len(results))
+	updatedDetail := make([]UpdatedToolDetail, 0, len(set.Candidates))
 
 	for _, res := range results {
 		if res.Success {
@@ -268,6 +287,16 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 			}
 		} else {
 			failed = append(failed, res.Tool.Name())
+			// Record the cause alongside the name. Resolution failures are
+			// reported separately as diagnostics below, but an install
+			// failure's reason is otherwise visible only in the terminal's
+			// live stream, which --json/--ci/--quiet never produce.
+			if res.Error != nil {
+				failedDetail = append(failedDetail, ToolFailure{
+					Name:  res.Tool.Name(),
+					Error: res.Error.Error(),
+				})
+			}
 		}
 	}
 
@@ -307,8 +336,10 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 		if !ok || !res.Success {
 			continue
 		}
-		// Pre-resolution version cannot be inferred from result alone; we use
-		// the tool's Version() field which reflects the installed binary version.
+		// Previous is the version installed before this run. res.Tool is the
+		// snapshot taken at Load time, so its Version() is exactly the
+		// pre-install version, which is the only source that still carries it
+		// once the install has already replaced the binary on disk.
 		updatedDetail = append(updatedDetail, UpdatedToolDetail{
 			Name:        c.Tool.Name(),
 			PackagePath: c.Tool.PackagePath(),
@@ -320,13 +351,7 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 
 	// Skipped mirrors the plan operation: selected but ineligible (local)
 	// tools first, then invalid binaries, which are always reported.
-	skipped := make([]string, 0, len(set.Skipped)+len(loadRes.Invalid))
-	for _, t := range set.Skipped {
-		skipped = append(skipped, t.Name())
-	}
-	for _, inv := range loadRes.Invalid {
-		skipped = append(skipped, inv.Path)
-	}
+	skipped := skippedNames(set.Skipped, loadRes.Invalid)
 
 	return UpdateReport{
 		OperationEnvelope: OperationEnvelope{
@@ -339,6 +364,7 @@ func (a *App) updateReport(results []tool.ToolUpdateResult, loadRes tool.LoadRes
 		Notes:         notes,
 		Skipped:       skipped,
 		Failed:        failed,
+		FailedDetail:  failedDetail,
 		Duration:      duration,
 		Diagnostics:   diagnostics,
 	}

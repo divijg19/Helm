@@ -3,8 +3,9 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 // JSONRenderer emits machine-readable JSON. It is an output renderer, not an
@@ -18,13 +19,16 @@ func (JSONRenderer) Inventory(report InventoryReport) error {
 	// Emit the full inventory model, not the bare tool list: machine
 	// consumers need the same status, invalid-binary, and summary detail
 	// the human renderers show to reconcile a failed inventory.
+	//
+	// The never-null array contract is enforced at this wire boundary rather
+	// than trusted from the report builder, for the same reason as Outdated.
+	if report.Tools == nil {
+		report.Tools = []ToolInventoryItem{}
+	}
 	if err := emitJSON(report); err != nil {
 		return err
 	}
-	if report.Summary.Unhealthy > 0 || report.Summary.Invalid > 0 {
-		return fmt.Errorf("%d issues found during inventory check", report.Summary.Unhealthy+report.Summary.Invalid)
-	}
-	return nil
+	return report.Err()
 }
 
 func (JSONRenderer) Plan(report PlanReport) error {
@@ -32,28 +36,23 @@ func (JSONRenderer) Plan(report PlanReport) error {
 }
 
 func (JSONRenderer) Outdated(report OutdatedReport) error {
-	outReports := make([]OutdatedItemReport, 0, len(report.Results))
-	for _, o := range report.Results {
-		outReports = append(outReports, OutdatedItemReport{
-			Name:     o.Name,
-			Current:  o.Current,
-			Latest:   o.Latest,
-			Outdated: o.Outdated,
-			Error:    o.Error,
-		})
+	// The never-null array contract is enforced here, at the wire boundary,
+	// rather than trusted from the report builder: this renderer is reachable
+	// with a directly constructed report, and a machine consumer must never
+	// have to handle a null where an array is documented.
+	results := report.Results
+	if results == nil {
+		results = []OutdatedItemReport{}
 	}
 	if err := emitJSON(OutdatedReport{
 		OperationEnvelope: report.OperationEnvelope,
-		Results:           outReports,
+		Results:           results,
 	}); err != nil {
 		return err
 	}
 	// Process success agrees with resolution failures exactly like the human
 	// renderers, while the JSON document on stdout stays complete.
-	if report.Summary.Failed > 0 {
-		return fmt.Errorf("%d outdated checks failed", report.Summary.Failed)
-	}
-	return nil
+	return report.Err()
 }
 
 func (JSONRenderer) Update(report UpdateReport) error {
@@ -63,31 +62,31 @@ func (JSONRenderer) Update(report UpdateReport) error {
 	// Process success must agree with the operation failure state regardless
 	// of renderer: a failed update exits non-zero exactly like the human
 	// renderers, while the JSON document on stdout stays complete.
-	if len(report.Failed) > 0 {
-		return fmt.Errorf("%d updates failed", len(report.Failed))
-	}
-	return nil
+	return report.Err()
 }
 
 func (JSONRenderer) Info(loadRes tool.LoadResult, target string) error {
-	for _, t := range loadRes.Tools {
-		if t.Name() == target {
-			return emitJSON(ToolReport{
-				Name:        t.Name(),
-				Version:     t.Version(),
-				PackagePath: t.PackagePath(),
-				ModulePath:  t.ModulePath(),
-			})
-		}
+	t, err := LookupTool(loadRes, target)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("tool '%s' not found or has no module metadata", target)
+	return emitJSON(ToolReport{
+		Name:        t.Name(),
+		Version:     t.Version(),
+		PackagePath: t.PackagePath(),
+		ModulePath:  t.ModulePath(),
+	})
 }
 
+// emitJSON writes one JSON document followed by a newline. A streaming
+// encoder is used rather than MarshalIndent so the document is never copied
+// into an intermediate string; the output is byte-identical, since both
+// escape HTML by default and Encode appends the trailing newline.
 func emitJSON(v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("failed to encode JSON output: %w", err)
 	}
-	fmt.Println(string(data))
 	return nil
 }

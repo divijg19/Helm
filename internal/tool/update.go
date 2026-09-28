@@ -13,8 +13,10 @@ type Diagnostic struct {
 }
 
 type ToolUpdateResult struct {
-	Tool    Tool
-	Status  Status
+	Tool Tool
+	// Success reports whether the install completed. Error carries the reason
+	// when it did not, and is what the non-terminal renderers report as the
+	// failure cause.
 	Success bool
 	Notes   []string
 	Error   error
@@ -24,85 +26,12 @@ type Progress struct {
 	Current int
 	Total   int
 	Tool    Tool
-	Version string // resolved version being installed (e.g. "v1.3.0"), empty for legacy path
-	Action  string // "Start", "Output", "Complete", "Skipped"
+	Version string // resolved version being installed (e.g. "v1.3.0")
+	Action  string // "Start", "Output", "Complete"
 	Line    string
-	Status  Status
 	Success bool
 	Notes   []string
 	Error   error
-}
-
-func Update(ctx context.Context, tools []Tool, filter []string, dryRun bool, runner Runner, onProgress func(Progress)) ([]ToolUpdateResult, time.Duration, []Diagnostic) {
-	start := time.Now()
-	if runner == nil {
-		runner = DefaultRunner{}
-	}
-
-	set := nameSet(filter)
-
-	var total int
-	for _, t := range tools {
-		if !selected(t.Name(), set) {
-			continue
-		}
-		total++
-	}
-
-	var results []ToolUpdateResult
-	var diagnostics []Diagnostic
-	var current int
-
-	for _, t := range tools {
-		if !selected(t.Name(), set) {
-			continue
-		}
-		current++
-
-		if !t.CanUpdate() {
-			prog := Progress{
-				Current: current,
-				Total:   total,
-				Tool:    t,
-				Action:  "Skipped",
-				Status:  StatusSkippedLocal,
-			}
-			if onProgress != nil {
-				onProgress(prog)
-			}
-			results = append(results, ToolUpdateResult{
-				Tool:   t,
-				Status: StatusSkippedLocal,
-			})
-			continue
-		}
-
-		if dryRun {
-			prog := Progress{
-				Current: current,
-				Total:   total,
-				Tool:    t,
-				Action:  "Complete",
-				Status:  StatusUpdated,
-				Success: true,
-			}
-			if onProgress != nil {
-				onProgress(prog)
-			}
-			results = append(results, ToolUpdateResult{
-				Tool:    t,
-				Status:  StatusUpdated,
-				Success: true,
-			})
-			continue
-		}
-
-		res, diags := installTool(ctx, t, "", InstallRef(t.InstallTarget()), current, total, runner, onProgress)
-		results = append(results, res)
-		diagnostics = append(diagnostics, diags...)
-	}
-
-	return results, time.Since(start), diagnostics
 }
 
 // UpdateCandidates installs exactly the given candidates at their resolved
@@ -121,12 +50,12 @@ func UpdateCandidates(ctx context.Context, candidates []UpdateCandidate, runner 
 		runner = DefaultRunner{}
 	}
 
-	var results []ToolUpdateResult
+	results := make([]ToolUpdateResult, 0, len(candidates))
 	var diagnostics []Diagnostic
 
 	total := len(candidates)
 	for i, c := range candidates {
-		res, diags := installTool(ctx, c.Tool, c.Version, InstallExactRef(c.Tool.InstallTarget(), c.Version), i+1, total, runner, onProgress)
+		res, diags := installTool(ctx, c.Tool, c.Version, i+1, total, runner, onProgress)
 		results = append(results, res)
 		diagnostics = append(diagnostics, diags...)
 	}
@@ -142,11 +71,11 @@ func isFetchEvent(line string) bool {
 	return strings.HasPrefix(line, "go: downloading") || strings.HasPrefix(line, "go: extracting")
 }
 
-// installTool executes one installation at the given reference and reports
-// the outcome through the shared progress/diagnostics contract. Both the
-// legacy floating-@latest path and the exact-version candidate path use it,
-// so progress, notes, and failure semantics are identical.
-func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, current, total int, runner Runner, onProgress func(Progress)) (ToolUpdateResult, []Diagnostic) {
+// installTool executes one installation of t at the already-resolved version
+// and reports the outcome through the shared progress/diagnostics contract.
+// The install reference is derived here so there is exactly one source of
+// truth for it: the resolved version and the package it came from.
+func installTool(ctx context.Context, t Tool, resolvedVersion string, current, total int, runner Runner, onProgress func(Progress)) (ToolUpdateResult, []Diagnostic) {
 	var diagnostics []Diagnostic
 
 	if onProgress != nil {
@@ -161,7 +90,7 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 
 	output, err := runner.Run(ctx, Command{
 		Name: "go",
-		Args: []string{"install", ref},
+		Args: []string{"install", InstallExactRef(t.InstallTarget(), resolvedVersion)},
 		OnLine: func(line string) {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" {
@@ -180,10 +109,6 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 	})
 
 	success := err == nil
-	status := StatusUpdated
-	if !success {
-		status = StatusFailed
-	}
 
 	var notes []string
 	for _, line := range strings.Split(output, "\n") {
@@ -217,10 +142,18 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 		Total:   total,
 		Tool:    t,
 		Action:  "Complete",
-		Status:  status,
 		Success: success,
 		Notes:   notes,
 		Error:   err,
+	}
+	// Every non-empty line already streamed live through OnLine when a
+	// progress sink is present (only the terminal renderer implements it),
+	// so a successful completion does not repeat them: the live subtree is
+	// the record, not an after-note. Failures keep the full notes so the
+	// error and its context stay co-located for triage. Revisit this if
+	// output filtering ever returns.
+	if onProgress != nil && success {
+		prog.Notes = nil
 	}
 	if onProgress != nil {
 		onProgress(prog)
@@ -228,7 +161,6 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 
 	return ToolUpdateResult{
 		Tool:    t,
-		Status:  status,
 		Success: success,
 		Notes:   notes,
 		Error:   err,

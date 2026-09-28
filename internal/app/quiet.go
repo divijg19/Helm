@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"os"
 
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 // QuietRenderer is the shell-scripting mode. It suppresses the banner,
-// discovery summary, progress renderer, and per-tool status, emitting only the
-// final update summary (Updated / Skipped / Failed / Duration) plus
-// diagnostics and failures.
+// discovery summary, and progress renderer. Only the update operation is
+// summary-only; inventory, plan, and outdated delegate to the terminal
+// renderer (without its header) because their tables are the requested data.
 type QuietRenderer struct{}
 
 func (QuietRenderer) Header(HeaderInfo) error { return nil }
@@ -30,11 +30,9 @@ func (QuietRenderer) Outdated(report OutdatedReport) error {
 }
 
 func (QuietRenderer) Update(report UpdateReport) error {
-	printSummaryLine("Updated", itoa(len(report.Updated)))
-	printSummaryLine("Up-to-date", itoa(len(report.UpToDate)))
-	printSummaryLine("Skipped", itoa(len(report.Skipped)))
-	printSummaryLine("Failed", itoa(len(report.Failed)))
-	printSummaryLine("Duration", formatDuration(report.Duration))
+	for _, row := range updateSummaryRows(report) {
+		printSummaryLine(row[0], row[1])
+	}
 
 	if len(report.Diagnostics) > 0 {
 		fmt.Println()
@@ -43,14 +41,30 @@ func (QuietRenderer) Update(report UpdateReport) error {
 		}
 	}
 
-	if len(report.Failed) > 0 {
+	if err := report.Err(); err != nil {
 		fmt.Println()
-		for _, f := range report.Failed {
-			fmt.Fprintf(os.Stderr, "failed: %s\n", f)
+		for _, f := range report.FailedDetail {
+			fmt.Fprintf(os.Stderr, "failed: %s: %s\n", f.Name, f.Error)
 		}
-		return fmt.Errorf("%d updates failed", len(report.Failed))
+		for _, f := range report.Failed {
+			if !hasFailureDetail(f, report.FailedDetail) {
+				fmt.Fprintf(os.Stderr, "failed: %s\n", f)
+			}
+		}
+		return err
 	}
 	return nil
+}
+
+// hasFailureDetail reports whether name already appears in detail, so a tool
+// with a recorded cause is not listed twice.
+func hasFailureDetail(name string, detail []ToolFailure) bool {
+	for _, d := range detail {
+		if d.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (QuietRenderer) Info(loadRes tool.LoadResult, target string) error {

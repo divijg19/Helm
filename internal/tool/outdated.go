@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -32,11 +33,11 @@ func isPseudoVersion(v string) bool {
 }
 
 func pseudoVersionBase(v string) string {
-	idx := strings.Index(v, "-20")
-	if idx != -1 {
-		base := v[:idx]
-		base = strings.TrimSuffix(base, "-0")
-		return base
+	// The base of a Go pseudo-version is the vMAJOR.MINOR.PATCH triple before
+	// the date component, so it can never end in "-0"; no normalization beyond
+	// cutting at the date is needed.
+	if idx := strings.Index(v, "-20"); idx != -1 {
+		return v[:idx]
 	}
 	return v
 }
@@ -186,7 +187,7 @@ func checkToolOutdated(ctx context.Context, t Tool, runner Runner) OutdatedResul
 		return OutdatedResult{
 			Tool:    t,
 			Current: current,
-			Error:   fmt.Errorf("unable to resolve latest version"),
+			Error:   errors.New("unable to resolve latest version"),
 		}
 	}
 
@@ -224,7 +225,9 @@ func checkToolOutdated(ctx context.Context, t Tool, runner Runner) OutdatedResul
 	if semver.IsValid(normCurrent) && semver.IsValid(normLatest) {
 		outdated = semver.Compare(normLatest, normCurrent) > 0
 	} else {
-		outdated = current != latest && latest != ""
+		// latest is known non-empty here: the empty case returned an error
+		// above, so only the string inequality can differ.
+		outdated = current != latest
 	}
 
 	return OutdatedResult{

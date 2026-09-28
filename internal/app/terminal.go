@@ -3,11 +3,12 @@ package app
 import (
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 const (
@@ -15,7 +16,6 @@ const (
 	symBullet   = "•"
 	symFail     = "✗"
 	symOutdated = "↑"
-	symNote     = "ⓘ"
 )
 
 type TerminalRenderer struct {
@@ -36,18 +36,22 @@ func (r TerminalRenderer) Header(hdr HeaderInfo) error {
 	fmt.Println()
 	if hdr.LoadRes.Summary.Updatable > 0 {
 		fmt.Println("Updatable tools:")
-		// Compute max name width, minimum 16 to match established alignment.
-		var rows [][]string
+		// Collect the updatable tools once, then size the name column to the
+		// widest of them. Two passes with the same filter (one to build
+		// single-cell rows only to measure them) was pure overhead.
+		updatable := make([]tool.Tool, 0, len(hdr.LoadRes.Tools))
+		width := 16 // matches established alignment
 		for _, t := range hdr.LoadRes.Tools {
-			if t.CanUpdate() {
-				rows = append(rows, []string{t.Name()})
+			if !t.CanUpdate() {
+				continue
+			}
+			updatable = append(updatable, t)
+			if n := len(t.Name()); n > width {
+				width = n
 			}
 		}
-		width := columnWidths([]int{16}, rows...)[0]
-		for _, t := range hdr.LoadRes.Tools {
-			if t.CanUpdate() {
-				fmt.Printf("  %s %-*s %s\n", symBullet, width, t.Name(), t.Version())
-			}
+		for _, t := range updatable {
+			fmt.Printf("  %s %-*s %s\n", symBullet, width, t.Name(), t.Version())
 		}
 		fmt.Println()
 	}
@@ -67,13 +71,12 @@ func (r TerminalRenderer) Inventory(report InventoryReport) error {
 	if len(report.Tools) == 0 && len(report.Invalid) == 0 {
 		fmt.Println("No Go tools found.")
 		fmt.Println()
-		printSummaryBlock([][2]string{
-			{"Healthy", itoa(report.Summary.Healthy)},
-			{"Local", itoa(report.Summary.Local)},
-			{"Invalid", itoa(report.Summary.Invalid)},
-			{"Unhealthy", itoa(report.Summary.Unhealthy)},
-		})
-		return nil
+		printInventorySummary(report.Summary)
+		// Still the report's own decision: an empty tool list with issues in
+		// the summary must not exit 0 here while the other three renderers
+		// exit 1. It is nil today only because no current producer can build
+		// that shape.
+		return report.Err()
 	}
 
 	var rows [][]string
@@ -87,9 +90,9 @@ func (r TerminalRenderer) Inventory(report InventoryReport) error {
 	fmt.Printf(format, "NAME", "VERSION", "STATUS", "PACKAGE", "MODULE")
 
 	for _, t := range report.Tools {
-		if t.Name == "" {
-			continue
-		}
+		// No empty-name guard is needed: every tool reaching a report was
+		// discovered from a directory entry, so its name is never empty, and
+		// a nameless row would misalign the table anyway.
 		modPath := t.ModulePath
 		if modPath == "" {
 			modPath = "-"
@@ -112,17 +115,9 @@ func (r TerminalRenderer) Inventory(report InventoryReport) error {
 	}
 
 	fmt.Println()
-	printSummaryBlock([][2]string{
-		{"Healthy", itoa(report.Summary.Healthy)},
-		{"Local", itoa(report.Summary.Local)},
-		{"Invalid", itoa(report.Summary.Invalid)},
-		{"Unhealthy", itoa(report.Summary.Unhealthy)},
-	})
+	printInventorySummary(report.Summary)
 
-	if report.Summary.Unhealthy > 0 || report.Summary.Invalid > 0 {
-		return fmt.Errorf("%d issues found during inventory check", report.Summary.Unhealthy+report.Summary.Invalid)
-	}
-	return nil
+	return report.Err()
 }
 
 func (r TerminalRenderer) Plan(report PlanReport) error {
@@ -180,15 +175,12 @@ func (r TerminalRenderer) Outdated(report OutdatedReport) error {
 
 	fmt.Println()
 	printSummaryBlock([][2]string{
-		{"Checked", itoa(len(report.Results))},
+		{"Checked", itoa(report.Summary.Total)},
 		{"Outdated", itoa(report.Summary.Outdated)},
 		{"Up-to-date", itoa(report.Summary.UpToDate)},
 		{"Failed", itoa(report.Summary.Failed)},
 	})
-	if report.Summary.Failed > 0 {
-		return fmt.Errorf("%d outdated checks failed", report.Summary.Failed)
-	}
-	return nil
+	return report.Err()
 }
 
 func (r TerminalRenderer) OnProgress(p tool.Progress) {
@@ -206,17 +198,15 @@ func (r TerminalRenderer) OnProgress(p tool.Progress) {
 	case "Output":
 		fmt.Printf("  %s\n", p.Line)
 	case "Complete":
-		if p.Success && len(p.Notes) == 0 {
-			fmt.Printf("           %s\n", symCheck)
-		} else if p.Success && len(p.Notes) > 0 {
-			fmt.Printf("           %s\n", symNote)
-			fmt.Printf("  Package    %s\n", p.Tool.InstallTarget())
-			for _, note := range p.Notes {
-				fmt.Printf("  %s\n", note)
-			}
+		// A successful completion always arrives with no notes: installTool
+		// drops them whenever a progress sink is present, because the live
+		// subtree above is already the record. So success is simply the
+		// checkmark, and only the failure branch carries an error and notes.
+		if p.Success {
+			fmt.Println("           " + symCheck)
 		} else {
-			fmt.Printf("           %s\n", symFail)
-			fmt.Printf("  Error\n")
+			fmt.Println("           " + symFail)
+			fmt.Println("  Error")
 			if p.Error != nil {
 				fmt.Printf("    %v\n", p.Error)
 			}
@@ -224,7 +214,6 @@ func (r TerminalRenderer) OnProgress(p tool.Progress) {
 				fmt.Printf("    %s\n", note)
 			}
 		}
-	case "Skipped":
 	}
 }
 
@@ -257,21 +246,20 @@ func (r TerminalRenderer) Update(report UpdateReport) error {
 		for m := range moduleMap {
 			modules = append(modules, m)
 		}
-		sort.Strings(modules)
+		slices.Sort(modules)
 		for _, m := range modules {
 			details := moduleMap[m]
 			// Order children within a module deterministically by display name;
 			// grouping by module is otherwise input-order dependent.
-			sort.Slice(details, func(i, j int) bool {
-				return details[i].Name < details[j].Name
+			slices.SortFunc(details, func(a, b UpdatedToolDetail) int {
+				return strings.Compare(a.Name, b.Name)
 			})
 			// Use the first detail's resolved version as the module header.
+			// moduleMap already keyed every entry by its displayed module
+			// header, substituting "-" for an empty ModulePath, so the key is
+			// the header and this cannot disagree with the group title.
 			first := details[0]
-			modHeader := first.ModulePath
-			if modHeader == "" {
-				modHeader = "-"
-			}
-			fmt.Printf("  %s@%s\n", modHeader, first.Resolved)
+			fmt.Printf("  %s@%s\n", m, first.Resolved)
 			for _, d := range details {
 				prev := d.Previous
 				if prev == "" {
@@ -294,21 +282,17 @@ func (r TerminalRenderer) Update(report UpdateReport) error {
 		}
 	}
 
-	printSummaryBlock([][2]string{
-		{"Updated", itoa(len(report.Updated))},
-		{"Up-to-date", itoa(len(report.UpToDate))},
-		{"Skipped", itoa(len(report.Skipped))},
-		{"Failed", itoa(len(report.Failed))},
-		{"Duration", formatDuration(report.Duration)},
-	})
+	printSummaryBlock(updateSummaryRows(report))
 
-	if len(report.Failed) > 0 {
+	if err := report.Err(); err != nil {
 		fmt.Println()
 		fmt.Println("Failed tools:")
+		// The cause is deliberately not repeated here: the terminal already
+		// streamed it live, in context, under each installing tool.
 		for _, f := range report.Failed {
 			fmt.Printf("- %s\n", f)
 		}
-		return fmt.Errorf("%d updates failed", len(report.Failed))
+		return err
 	}
 
 	return nil
@@ -332,6 +316,31 @@ func columnWidths(minimums []int, rows ...[]string) []int {
 		}
 	}
 	return widths
+}
+
+// printInventorySummary renders the canonical inventory totals shared by
+// the empty and non-empty inventory paths.
+func printInventorySummary(summary InventorySummary) {
+	printSummaryBlock([][2]string{
+		{"Healthy", itoa(summary.Healthy)},
+		{"Local", itoa(summary.Local)},
+		{"Invalid", itoa(summary.Invalid)},
+		{"Unhealthy", itoa(summary.Unhealthy)},
+	})
+}
+
+// updateSummaryRows is the canonical update summary shared by the terminal
+// and quiet renderers, which differ only in whether they print the "Summary"
+// heading. Keeping one row list stops the two from drifting apart silently.
+// The CI renderer has its own key: value form and is intentionally separate.
+func updateSummaryRows(report UpdateReport) [][2]string {
+	return [][2]string{
+		{"Updated", itoa(len(report.Updated))},
+		{"Up-to-date", itoa(len(report.UpToDate))},
+		{"Skipped", itoa(len(report.Skipped))},
+		{"Failed", itoa(len(report.Failed))},
+		{"Duration", formatDuration(report.Duration)},
+	}
 }
 
 func printSummaryLine(label, value string) {
@@ -360,17 +369,16 @@ func formatDuration(d time.Duration) string {
 }
 
 func (r TerminalRenderer) Info(loadRes tool.LoadResult, target string) error {
-	for _, t := range loadRes.Tools {
-		if t.Name() == target {
-			fmt.Printf("Binary\n\n  %s\n\n", t.Name())
-			fmt.Printf("Main Package Path\n\n  %s\n\n", t.PackagePath())
-			fmt.Printf("Module Path\n\n  %s\n\n", t.ModulePath())
-			fmt.Printf("Version\n\n  %s\n\n", t.Version())
-			fmt.Printf("Go (Built with)\n\n  %s\n\n", t.GoVersion())
-			fmt.Printf("Location\n\n  %s\n\n", t.Path())
-			fmt.Printf("Can Update\n\n  %t\n", t.CanUpdate())
-			return nil
-		}
+	t, err := LookupTool(loadRes, target)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("tool '%s' not found or has no module metadata", target)
+	fmt.Printf("Binary\n\n  %s\n\n", t.Name())
+	fmt.Printf("Main Package Path\n\n  %s\n\n", t.PackagePath())
+	fmt.Printf("Module Path\n\n  %s\n\n", t.ModulePath())
+	fmt.Printf("Version\n\n  %s\n\n", t.Version())
+	fmt.Printf("Go (Built with)\n\n  %s\n\n", t.GoVersion())
+	fmt.Printf("Location\n\n  %s\n\n", t.Path())
+	fmt.Printf("Can Update\n\n  %t\n", t.CanUpdate())
+	return nil
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"helm/internal/tool"
+	"github.com/divijg19/Helm/internal/tool"
 )
 
 // CIRenderer produces deterministic, machine-oriented terminal output: no ANSI,
@@ -30,7 +30,7 @@ func (r CIRenderer) Header(hdr HeaderInfo) error {
 
 func (r CIRenderer) Inventory(report InventoryReport) error {
 	for _, t := range report.Tools {
-		status := stringsToASCII(t.Status)
+		status := statusToken(t.Status)
 		fmt.Printf("%-20s  %-16s  %-9s  %s\n", t.Name, t.Version, status, t.PackagePath)
 		if t.Error != "" {
 			fmt.Fprintf(os.Stderr, "error: %s: %s\n", t.Name, t.Error)
@@ -44,10 +44,7 @@ func (r CIRenderer) Inventory(report InventoryReport) error {
 	fmt.Printf("local: %d\n", report.Summary.Local)
 	fmt.Printf("invalid: %d\n", report.Summary.Invalid)
 	fmt.Printf("unhealthy: %d\n", report.Summary.Unhealthy)
-	if report.Summary.Unhealthy > 0 || report.Summary.Invalid > 0 {
-		return fmt.Errorf("%d issues found during inventory check", report.Summary.Unhealthy+report.Summary.Invalid)
-	}
-	return nil
+	return report.Err()
 }
 
 func (r CIRenderer) Plan(report PlanReport) error {
@@ -81,14 +78,11 @@ func (r CIRenderer) Outdated(report OutdatedReport) error {
 		}
 	}
 	fmt.Println()
-	fmt.Printf("checked: %d\n", len(report.Results))
+	fmt.Printf("checked: %d\n", report.Summary.Total)
 	fmt.Printf("outdated: %d\n", report.Summary.Outdated)
 	fmt.Printf("up-to-date: %d\n", report.Summary.UpToDate)
 	fmt.Printf("failed: %d\n", report.Summary.Failed)
-	if report.Summary.Failed > 0 {
-		return fmt.Errorf("%d outdated checks failed", report.Summary.Failed)
-	}
-	return nil
+	return report.Err()
 }
 
 func (r CIRenderer) Update(report UpdateReport) error {
@@ -101,6 +95,11 @@ func (r CIRenderer) Update(report UpdateReport) error {
 	for _, name := range report.Failed {
 		fmt.Printf("failed: %s\n", name)
 	}
+	// The cause follows the name so a CI log line is self-explanatory without
+	// having to correlate against the JSON output.
+	for _, f := range report.FailedDetail {
+		fmt.Printf("failed-reason: %s: %s\n", f.Name, f.Error)
+	}
 	for _, name := range report.Skipped {
 		fmt.Printf("skipped: %s\n", name)
 	}
@@ -112,37 +111,34 @@ func (r CIRenderer) Update(report UpdateReport) error {
 	fmt.Printf("up-to-date-count: %d\n", len(report.UpToDate))
 	fmt.Printf("skipped-count: %d\n", len(report.Skipped))
 	fmt.Printf("failed-count: %d\n", len(report.Failed))
-	if len(report.Failed) > 0 {
-		return fmt.Errorf("%d updates failed", len(report.Failed))
-	}
-	return nil
+	return report.Err()
 }
 
 func (r CIRenderer) Info(loadRes tool.LoadResult, target string) error {
-	for _, t := range loadRes.Tools {
-		if t.Name() == target {
-			fmt.Printf("name: %s\n", t.Name())
-			fmt.Printf("package: %s\n", t.PackagePath())
-			fmt.Printf("module: %s\n", t.ModulePath())
-			fmt.Printf("version: %s\n", t.Version())
-			fmt.Printf("go-version: %s\n", t.GoVersion())
-			fmt.Printf("path: %s\n", t.Path())
-			fmt.Printf("can-update: %t\n", t.CanUpdate())
-			return nil
-		}
+	t, err := LookupTool(loadRes, target)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("tool '%s' not found or has no module metadata", target)
+	fmt.Printf("name: %s\n", t.Name())
+	fmt.Printf("package: %s\n", t.PackagePath())
+	fmt.Printf("module: %s\n", t.ModulePath())
+	fmt.Printf("version: %s\n", t.Version())
+	fmt.Printf("go-version: %s\n", t.GoVersion())
+	fmt.Printf("path: %s\n", t.Path())
+	fmt.Printf("can-update: %t\n", t.CanUpdate())
+	return nil
 }
 
-func stringsToASCII(s string) string {
+// statusToken maps an inventory status to its stable CI token. Only the
+// three statuses inventoryReport can assign are listed; invalid binaries are
+// reported separately and never reach this mapping.
+func statusToken(s string) string {
 	switch s {
-	case "Healthy":
+	case statusHealthy:
 		return "OK"
-	case "Local":
+	case statusLocal:
 		return "LOCAL"
-	case "Invalid":
-		return "INVALID"
-	case "Unhealthy":
+	case statusUnhealthy:
 		return "ERROR"
 	default:
 		return s

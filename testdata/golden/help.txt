@@ -3,14 +3,14 @@ Helm v1.9.0-test - Inspect, inventory, and update Go-managed tools
 Usage:
     helm [tool...]
     helm --list [--json|--ci|--quiet]
-    helm --check/--dry-run [--verbose|-V]
-    helm --outdated [--json|--ci]
+    helm --check/--dry-run [--verbose|-V] [--json|--ci|--quiet]
+    helm --outdated [--json|--ci|--quiet]
     helm --info <tool>
     helm --json
     helm --quiet | -q
     helm --ci
-    helm --help
-    helm --version
+    helm --help | -h
+    helm --version | -v
 
 Operations:
     --list             List all Go-managed tools with versions, health status, and packages

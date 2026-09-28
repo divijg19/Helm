@@ -3,28 +3,31 @@
 # canonical `helm` executable plus its aliases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/divijg19/helm/main/install.sh | sh
-#   VERSION=v1.9.5 sh install.sh
+#   curl -fsSL https://raw.githubusercontent.com/divijg19/Helm/main/install.sh | sh
+#   VERSION=vX.Y.Z sh install.sh   # pin a release tag; omit to install the latest
 #   INSTALL_DIR=/usr/local/bin sh install.sh
+#
+# VERSION must name a published release tag: the download URL is built from it
+# directly, so an unpublished or mistyped tag fails with a download error.
 #
 # Downloaded content is never executed before verification: every artifact is
 # checked against the published SHA-256 checksums before extraction, and only
 # then does the installer run the extracted binary once for a version check.
-# Portable POSIX sh only; no bashisms.
+# Portable POSIX sh only; no bashisms. Requires mktemp(1) and install(1),
+# which are not part of POSIX and may be missing from very minimal images.
 
 set -eu
 
-REPO="divijg19/helm"
+REPO="divijg19/Helm"   # matches the module path; GitHub paths are case-insensitive
 BINARY="helm"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${VERSION:-}"
 
 cleanup() {
-    if [ -n "${TMPDIR:-}" ] && [ -d "${TMPDIR}" ]; then
-        rm -rf "$TMPDIR"
+    if [ -n "${WORKDIR:-}" ] && [ -d "${WORKDIR}" ]; then
+        rm -rf "$WORKDIR"
     fi
 }
-trap cleanup EXIT INT TERM
 
 die() {
     echo "install.sh: error: $*" >&2
@@ -85,8 +88,13 @@ sha256_of() {
 
 # --- download + verify -------------------------------------------------------
 
-TMPDIR="$(mktemp -d)" || die "cannot create temporary directory"
-cd "$TMPDIR" || die "cannot enter temporary directory"
+WORKDIR="$(mktemp -d)" || die "cannot create temporary directory"
+# Arm the cleanup trap only now that WORKDIR holds a directory this script
+# created. It must never be armed earlier: TMPDIR is a standard variable that
+# macOS and many CI images export, so a trap registered before this assignment
+# would delete the caller's pre-existing temporary directory on any early exit.
+trap cleanup EXIT INT TERM
+cd "$WORKDIR" || die "cannot enter temporary directory"
 
 ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"

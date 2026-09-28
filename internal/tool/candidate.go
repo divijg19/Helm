@@ -44,6 +44,29 @@ func isUpdateCandidate(r OutdatedResult) bool {
 	return r.Error == nil && r.Outdated && r.Latest != ""
 }
 
+// partitionResult files one outdated result into exactly one bucket of set.
+// Only isUpdateCandidate results may become candidates; a result that claims
+// to be outdated but carries no usable version is recorded as an
+// ErrUnresolvedVersion failure so it stays visible without ever authorizing an
+// install at an unknown version.
+func partitionResult(set *CandidateSet, r OutdatedResult) {
+	switch {
+	case r.Error != nil:
+		set.Failed = append(set.Failed, r)
+	case isUpdateCandidate(r):
+		set.Candidates = append(set.Candidates, UpdateCandidate{Tool: r.Tool, Version: r.Latest})
+	case r.Outdated:
+		set.Failed = append(set.Failed, OutdatedResult{
+			Tool:    r.Tool,
+			Current: r.Current,
+			Latest:  r.Latest,
+			Error:   ErrUnresolvedVersion,
+		})
+	default:
+		set.UpToDate = append(set.UpToDate, r.Tool)
+	}
+}
+
 // ResolveUpdateCandidates runs the existing CheckOutdated implementation over
 // the selected updatable tools and partitions the fresh results. Selection
 // uses the existing exact-name semantics; unselected tools are never
@@ -52,43 +75,24 @@ func isUpdateCandidate(r OutdatedResult) bool {
 func ResolveUpdateCandidates(ctx context.Context, tools []Tool, filter []string, runner Runner) CandidateSet {
 	set := nameSet(filter)
 
-	eligible := make([]Tool, 0, len(tools))
 	var out CandidateSet
-	for _, t := range tools {
-		if !selected(t.Name(), set) {
-			continue
-		}
-		if !t.CanUpdate() {
-			out.Skipped = append(out.Skipped, t)
-			continue
-		}
-		eligible = append(eligible, t)
-	}
+	// Same selection and eligibility rules as Plan, so the plan a user sees
+	// and the update that then runs always cover the same tools.
+	eligible, skipped := partitionSelection(tools, set)
+	out.Skipped = skipped
 
 	for _, r := range CheckOutdated(ctx, eligible, runner) {
-		switch {
-		case r.Error != nil:
-			out.Failed = append(out.Failed, r)
-		case isUpdateCandidate(r):
-			out.Candidates = append(out.Candidates, UpdateCandidate{Tool: r.Tool, Version: r.Latest})
-		case r.Outdated:
-			out.Failed = append(out.Failed, OutdatedResult{
-				Tool:    r.Tool,
-				Current: r.Current,
-				Latest:  r.Latest,
-				Error:   ErrUnresolvedVersion,
-			})
-		default:
-			out.UpToDate = append(out.UpToDate, r.Tool)
-		}
+		partitionResult(&out, r)
 	}
 	return out
 }
 
-// InstallExactRef returns the module@version reference installing exactly the
-// given resolved version. The update phase must use this with the version
-// produced by outdated resolution; InstallRef (floating @latest) remains the
-// rule displayed by --check/--dry-run for eligible tools.
+// InstallExactRef returns the package@version reference installing exactly the
+// given resolved version. target is a main package path (Tool.InstallTarget),
+// not a module path: `go install` takes a package, and ModulePath is used
+// separately for `go list -m` queries. The update phase must use this with the
+// version produced by outdated resolution; InstallRef (floating @latest)
+// remains the rule displayed by --check/--dry-run for eligible tools.
 func InstallExactRef(target, version string) string {
 	return target + "@" + version
 }

@@ -1,22 +1,16 @@
 package tool
 
 import (
-	"debug/buildinfo"
 	"reflect"
-	"runtime/debug"
 	"strings"
 	"testing"
 )
 
 func planTool(name string, devel bool) Tool {
-	version := "v1.0.0"
 	if devel {
-		version = "(devel)"
+		return localTool(name)
 	}
-	return NewTool(name, "/gobin/"+name, &buildinfo.BuildInfo{
-		Path: "example.com/" + name + "/cmd/" + name,
-		Main: debug.Module{Path: "example.com/" + name, Version: version},
-	})
+	return moduleTool(name, "v1.0.0")
 }
 
 func TestPlan_AllTools(t *testing.T) {
@@ -84,19 +78,14 @@ func TestInstallRef(t *testing.T) {
 	}
 }
 
-func TestInstallCommand(t *testing.T) {
-	got := InstallCommand("example.com/hello")
-	want := "go install example.com/hello@latest"
-	if got != want {
-		t.Errorf("InstallCommand = %q, want %q", got, want)
-	}
-}
-
 // The plan display rule (floating @latest) intentionally differs from the
 // executed reference (pinned @resolved version): --check shows what an
 // update would run, while installation pins the exact version outdated
 // resolution authorized. This test pins both sides of that distinction so
-// neither the display nor the execution reference drifts silently.
+// neither the display nor the execution reference drifts silently. It replaces
+// three earlier one-line tests (TestInstallCommand, TestInstallRef,
+// TestInstallExactRef) that each asserted a single string and overlapped it
+// entirely.
 func TestInstallDisplayVsExecutionReferences(t *testing.T) {
 	target := "example.com/hello"
 	if got := InstallCommand(target); got != "go install "+target+"@latest" {

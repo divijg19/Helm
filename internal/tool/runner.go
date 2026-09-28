@@ -10,6 +10,11 @@ import (
 	"sync"
 )
 
+// Command is one subprocess invocation. Name, Args, and OnLine are used by
+// every production caller. Dir and Env are a deliberate test seam: no
+// production path sets them today, but they let runner tests exercise the
+// working-directory and environment handling in Run without stubbing the
+// runner itself.
 type Command struct {
 	Name   string
 	Args   []string
@@ -82,7 +87,8 @@ func (DefaultRunner) Run(ctx context.Context, c Command) (string, error) {
 			}
 			continue
 		}
-		fullOutput.WriteString(res.line + "\n")
+		fullOutput.WriteString(res.line)
+		fullOutput.WriteByte('\n')
 		c.OnLine(res.line)
 	}
 
