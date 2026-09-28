@@ -135,6 +135,13 @@ func Run(inv Invocation, args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: Option --info takes exactly one tool name.")
 		return ExitUsage
 	}
+	// The missing target is checked here rather than at dispatch so usage
+	// errors never render output: --info with no target must fail with an
+	// empty stdout exactly like --info with extra targets.
+	if operation == "--info" && len(toolArgs) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: Option --info requires a tool name.")
+		return ExitUsage
+	}
 
 	renderHeader(ctx, application, renderer, loadRes, mode)
 
@@ -148,10 +155,6 @@ func Run(inv Invocation, args []string) int {
 			return fail("Error:", err)
 		}
 	case "--info":
-		if len(toolArgs) == 0 {
-			fmt.Fprintln(os.Stderr, "Error: Option --info requires a tool name.")
-			return ExitUsage
-		}
 		// An unknown tool name is an operational lookup failure, not a
 		// usage error: the invocation syntax is valid but the target does
 		// not resolve to a known tool.

@@ -69,6 +69,24 @@ func TestGetGobin(t *testing.T) {
 			wantPath:  filepath.Join("/first", "bin"),
 			wantCalls: []string{"GOBIN", "GOPATH"},
 		},
+		{
+			// Empty entries carry no directory: a leading separator must
+			// not resolve to a relative path.
+			name:      "Case G — empty GOPATH entries skipped",
+			gobinOut:  "\n",
+			gopathOut: string(os.PathListSeparator) + "/second\n",
+			wantPath:  filepath.Join("/second", "bin"),
+			wantCalls: []string{"GOBIN", "GOPATH"},
+		},
+		{
+			// A GOPATH of only separators has no usable entry and must
+			// fail resolution instead of inventing a relative path.
+			name:           "Case H — all-empty GOPATH entries error",
+			gobinOut:       "\n",
+			gopathOut:      string(os.PathListSeparator) + "\n",
+			wantErrContain: "GOPATH has no usable entries",
+			wantCalls:      []string{"GOBIN", "GOPATH"},
+		},
 	}
 
 	for _, tc := range tests {

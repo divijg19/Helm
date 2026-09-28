@@ -41,7 +41,15 @@ func getGobin(env goEnvFunc) (string, error) {
 	// A GOPATH may list several directories; binaries install to the first
 	// entry's bin directory, matching the go toolchain's own GOBIN default.
 	// SplitList uses the platform list separator (colon, semicolon on Windows).
-	return filepath.Join(filepath.SplitList(gopath)[0], "bin"), nil
+	// Empty entries carry no directory and are skipped rather than resolving
+	// to a relative path.
+	for _, entry := range filepath.SplitList(gopath) {
+		if entry == "" {
+			continue
+		}
+		return filepath.Join(entry, "bin"), nil
+	}
+	return "", fmt.Errorf("GOPATH has no usable entries and GOBIN is empty: %w", ErrGobinResolution)
 }
 
 // GetGobin resolves the directory containing Go-installed binaries. It prefers
