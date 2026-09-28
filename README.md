@@ -53,6 +53,11 @@ and installs only the ones proven outdated, each at the exact version it just
 evaluated. Tools that are already current are reported as up-to-date and left
 untouched; tools whose update state cannot be determined are never installed.
 
+Updates are transparent: the terminal streams the toolchain's own fetch
+events (`go: downloading`, `go: extracting`) verbatim under each tool as it
+installs, and the same lines persist in notes. Nothing is hidden, reordered,
+or reinterpreted; fetch chatter never feeds diagnostics.
+
 Tool names passed as filters must match installed tools: unknown names are
 rejected with exit code 2 and no report is produced. Filters apply to updates
 and plans; `--list` and `--outdated` take no tool names and `--info` takes

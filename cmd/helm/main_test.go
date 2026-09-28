@@ -250,6 +250,12 @@ func TestDefaultUpdate(t *testing.T) {
 	if result.code != 0 {
 		t.Errorf("exit code: expected 0, got %d", result.code)
 	}
+	// The hermetic module cache guarantees a real fetch on every run, so
+	// the golden would silently lose the transparency feature if the
+	// toolchain stopped emitting fetch events or Helm filtered them again.
+	if !strings.Contains(result.stdout, "go: downloading example.com/world v1.3.0") {
+		t.Errorf("expected live fetch subtree in update output:\n%s", result.stdout)
+	}
 }
 
 // TestDefaultUpdateInstallsOnlyOutdated is the end-to-end proof of the

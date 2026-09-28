@@ -17,9 +17,10 @@ import (
 // Fixture is a hermetic environment backed by a temporary GOBIN and a
 // file-based module proxy.
 type Fixture struct {
-	GobinDir  string
-	ProxyDir  string
-	moduleSrc string
+	GobinDir    string
+	ProxyDir    string
+	ModCacheDir string
+	moduleSrc   string
 }
 
 // NewFixture creates the environment and installs the fixture binaries:
@@ -36,15 +37,32 @@ func NewFixture(t *testing.T) *Fixture {
 
 	tmp := t.TempDir()
 	f := &Fixture{
-		GobinDir:  filepath.Join(tmp, "gobin"),
-		ProxyDir:  filepath.Join(tmp, "proxy"),
-		moduleSrc: moduleRoot(t),
+		GobinDir:    filepath.Join(tmp, "gobin"),
+		ProxyDir:    filepath.Join(tmp, "proxy"),
+		ModCacheDir: filepath.Join(tmp, "modcache"),
+		moduleSrc:   moduleRoot(t),
 	}
-	for _, dir := range []string{f.GobinDir, f.ProxyDir} {
+	for _, dir := range []string{f.GobinDir, f.ProxyDir, f.ModCacheDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// The toolchain writes module cache files read-only, which would make
+	// t.TempDir's automatic removal fail. Loosen permissions first; this
+	// cleanup is registered after TempDir creation so it runs before the
+	// directory removal.
+	t.Cleanup(func() {
+		filepath.WalkDir(f.ModCacheDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			return os.Chmod(path, info.Mode()|0o200)
+		})
+	})
 
 	// Install hello@v1.0.0 (up to date) and world@v1.2.0 (outdated).
 	f.publish(t, "example.com/hello", "v1.0.0")
@@ -63,13 +81,17 @@ func NewFixture(t *testing.T) *Fixture {
 }
 
 // Env returns the environment variables the tool subprocesses must inherit to
-// resolve GOBIN and reach the file proxy.
+// resolve GOBIN and reach the file proxy. The module cache is isolated per
+// fixture so test runs never depend on ambient cache state: every update
+// deterministically fetches what it installs, which is exactly what the
+// golden outputs record.
 func (f *Fixture) Env() []string {
 	return []string{
 		"GOBIN=" + f.GobinDir,
 		"GOPROXY=file://" + f.ProxyDir,
 		"GOSUMDB=off",
 		"GONOSUMDB=*",
+		"GOMODCACHE=" + f.ModCacheDir,
 	}
 }
 

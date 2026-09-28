@@ -4,7 +4,9 @@ import (
 	"context"
 	"debug/buildinfo"
 	"errors"
+	"reflect"
 	"runtime/debug"
+	"strings"
 	"testing"
 )
 
@@ -92,6 +94,74 @@ func TestUpdateWarnSubstringNotDiagnostic(t *testing.T) {
 	_, _, warnDiagnostics := Update(ctx, []Tool{tool}, nil, false, warnRunner, nil)
 	if len(warnDiagnostics) != 1 || warnDiagnostics[0].Category != "Warning" {
 		t.Errorf("Expected one Warning diagnostic, got %v", warnDiagnostics)
+	}
+}
+
+// replayRunner replays fixed lines through the OnLine callback exactly as a
+// streaming subprocess would, then returns them joined as the full output.
+type replayRunner struct {
+	lines []string
+	err   error
+}
+
+func (r replayRunner) Run(ctx context.Context, c Command) (string, error) {
+	var sb strings.Builder
+	for _, l := range r.lines {
+		if c.OnLine != nil {
+			c.OnLine(l)
+		}
+		sb.WriteString(l + "\n")
+	}
+	return sb.String(), r.err
+}
+
+// TestInstallTool_FetchEventsStreamAndPersist pins the no-magic contract:
+// toolchain fetch lines stream to progress verbatim and persist in notes,
+// but never feed the diagnostics classifier (module paths may contain words
+// like "warning" without anything being wrong).
+func TestInstallTool_FetchEventsStreamAndPersist(t *testing.T) {
+	ctx := context.Background()
+	bi := &buildinfo.BuildInfo{
+		Path: "example.com/tool/cmd/tool",
+		Main: debug.Module{
+			Path:    "example.com/tool",
+			Version: "v1.0.0",
+		},
+	}
+	tool := Tool{
+		name: "dummy",
+		path: "/fake/path",
+		info: bi,
+	}
+
+	fetch := []string{
+		"go: downloading example.com/tool v1.2.0",
+		"go: extracting example.com/tool v1.2.0",
+		"go: downloading example.com/warning v1.0.0",
+	}
+	var actions []Progress
+	runner := replayRunner{lines: fetch}
+	results, _, diagnostics := Update(ctx, []Tool{tool}, nil, false, runner, func(p Progress) {
+		actions = append(actions, p)
+	})
+	if len(results) != 1 {
+		Fatalf(t, "Expected 1 result, got %d", len(results))
+	}
+
+	var streamed []string
+	for _, p := range actions {
+		if p.Action == "Output" {
+			streamed = append(streamed, p.Line)
+		}
+	}
+	if !reflect.DeepEqual(streamed, fetch) {
+		t.Errorf("streamed fetch lines = %v, want %v verbatim and in order", streamed, fetch)
+	}
+	if !reflect.DeepEqual(results[0].Notes, fetch) {
+		t.Errorf("persisted notes = %v, want %v", results[0].Notes, fetch)
+	}
+	if len(diagnostics) != 0 {
+		t.Errorf("fetch lines must not feed diagnostics, got %v", diagnostics)
 	}
 }
 

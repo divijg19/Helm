@@ -9,6 +9,7 @@ updated: world
 up-to-date: hello
 skipped: localdev
 skipped: <TMP>/gobin/notgo
+note: world
 
 updated-count: 1
 up-to-date-count: 1

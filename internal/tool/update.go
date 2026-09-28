@@ -134,6 +134,14 @@ func UpdateCandidates(ctx context.Context, candidates []UpdateCandidate, runner 
 	return results, time.Since(start), diagnostics
 }
 
+// isFetchEvent reports whether a toolchain line describes module fetching.
+// Fetch events stream to progress and persist in notes verbatim, but they
+// never feed the deprecation/warning diagnostics classifier: a module path
+// can contain those words without anything being wrong.
+func isFetchEvent(line string) bool {
+	return strings.HasPrefix(line, "go: downloading") || strings.HasPrefix(line, "go: extracting")
+}
+
 // installTool executes one installation at the given reference and reports
 // the outcome through the shared progress/diagnostics contract. Both the
 // legacy floating-@latest path and the exact-version candidate path use it,
@@ -157,9 +165,6 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 		OnLine: func(line string) {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" {
-				return
-			}
-			if strings.HasPrefix(trimmed, "go: downloading") || strings.HasPrefix(trimmed, "go: extracting") {
 				return
 			}
 			if onProgress != nil {
@@ -186,10 +191,10 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "go: downloading") || strings.HasPrefix(line, "go: extracting") {
+		notes = append(notes, line)
+		if isFetchEvent(line) {
 			continue
 		}
-		notes = append(notes, line)
 
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "deprecated") || strings.Contains(lower, "deprecation") {

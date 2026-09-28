@@ -37,16 +37,13 @@ func (r TerminalRenderer) Header(hdr HeaderInfo) error {
 	if hdr.LoadRes.Summary.Updatable > 0 {
 		fmt.Println("Updatable tools:")
 		// Compute max name width, minimum 16 to match established alignment.
-		maxNameLen := 0
+		var rows [][]string
 		for _, t := range hdr.LoadRes.Tools {
-			if t.CanUpdate() && len(t.Name()) > maxNameLen {
-				maxNameLen = len(t.Name())
+			if t.CanUpdate() {
+				rows = append(rows, []string{t.Name()})
 			}
 		}
-		width := maxNameLen
-		if width < 16 {
-			width = 16
-		}
+		width := columnWidths([]int{16}, rows...)[0]
 		for _, t := range hdr.LoadRes.Tools {
 			if t.CanUpdate() {
 				fmt.Printf("  %s %-*s %s\n", symBullet, width, t.Name(), t.Version())
@@ -79,26 +76,14 @@ func (r TerminalRenderer) Inventory(report InventoryReport) error {
 		return nil
 	}
 
-	maxNameLen := 4
-	maxVerLen := 7
-	maxStatusLen := 7
-	maxPkgLen := 7
+	var rows [][]string
 	for _, t := range report.Tools {
-		if len(t.Name) > maxNameLen {
-			maxNameLen = len(t.Name)
-		}
-		if len(t.Version) > maxVerLen {
-			maxVerLen = len(t.Version)
-		}
-		if len(t.Status) > maxStatusLen {
-			maxStatusLen = len(t.Status)
-		}
-		if len(t.PackagePath) > maxPkgLen {
-			maxPkgLen = len(t.PackagePath)
-		}
+		rows = append(rows, []string{t.Name, t.Version, t.Status, t.PackagePath})
 	}
+	// Floors match the header widths ("NAME", "VERSION", "STATUS", "PACKAGE").
+	widths := columnWidths([]int{4, 7, 7, 7}, rows...)
 
-	format := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds   %%-%ds   %%s\n", maxNameLen, maxVerLen, maxStatusLen, maxPkgLen)
+	format := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds   %%-%ds   %%s\n", widths[0], widths[1], widths[2], widths[3])
 	fmt.Printf(format, "NAME", "VERSION", "STATUS", "PACKAGE", "MODULE")
 
 	for _, t := range report.Tools {
@@ -173,18 +158,14 @@ func (r TerminalRenderer) Plan(report PlanReport) error {
 }
 
 func (r TerminalRenderer) Outdated(report OutdatedReport) error {
-	maxNameLen := 4
-	maxCurrLen := 7
+	var rows [][]string
 	for _, o := range report.Results {
-		if len(o.Name) > maxNameLen {
-			maxNameLen = len(o.Name)
-		}
-		if len(o.Current) > maxCurrLen {
-			maxCurrLen = len(o.Current)
-		}
+		rows = append(rows, []string{o.Name, o.Current})
 	}
+	// Floors match the header widths ("NAME", "CURRENT").
+	widths := columnWidths([]int{4, 7}, rows...)
 
-	format := fmt.Sprintf("%%-%ds   %%-%ds   %%s\n", maxNameLen, maxCurrLen)
+	format := fmt.Sprintf("%%-%ds   %%-%ds   %%s\n", widths[0], widths[1])
 	fmt.Printf(format, "NAME", "CURRENT", "STATUS")
 
 	for _, o := range report.Results {
@@ -336,6 +317,22 @@ func (r TerminalRenderer) Update(report UpdateReport) error {
 // summaryLabelWidth aligns every summary block across all commands so each
 // renderer ends with the same visual rhythm: "Summary" then aligned values.
 const summaryLabelWidth = 14
+
+// columnWidths returns the display width of each column: the maximum byte
+// length across all rows, floored element-wise by minimums. Callers pass one
+// minimum per column and rows of exactly that many cells; the byte-length
+// rule matches the historical %-Ns formatting exactly.
+func columnWidths(minimums []int, rows ...[]string) []int {
+	widths := append([]int(nil), minimums...)
+	for _, row := range rows {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+	return widths
+}
 
 func printSummaryLine(label, value string) {
 	fmt.Printf("%-*s%s\n", summaryLabelWidth, label, value)
