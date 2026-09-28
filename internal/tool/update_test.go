@@ -63,6 +63,38 @@ func TestUpdateRunner(t *testing.T) {
 	}
 }
 
+// TestUpdateWarnSubstringNotDiagnostic proves diagnostic precision: only
+// lines containing "warning" (or deprecation markers) become diagnostics.
+// A bare "warn" substring — as in "unwarned" or "forewarn" — must not
+// produce a Warning diagnostic.
+func TestUpdateWarnSubstringNotDiagnostic(t *testing.T) {
+	ctx := context.Background()
+	bi := &buildinfo.BuildInfo{
+		Path: "example.com/tool/cmd/tool",
+		Main: debug.Module{
+			Path:    "example.com/tool",
+			Version: "v1.0.0",
+		},
+	}
+	tool := Tool{
+		name: "dummy",
+		path: "/fake/path",
+		info: bi,
+	}
+
+	runner := mockRunner{output: "unwarned forewarn notice\n"}
+	_, _, diagnostics := Update(ctx, []Tool{tool}, nil, false, runner, nil)
+	if len(diagnostics) != 0 {
+		t.Errorf("Expected no diagnostics for warn-substring line, got %v", diagnostics)
+	}
+
+	warnRunner := mockRunner{output: "go: warning: something odd\n"}
+	_, _, warnDiagnostics := Update(ctx, []Tool{tool}, nil, false, warnRunner, nil)
+	if len(warnDiagnostics) != 1 || warnDiagnostics[0].Category != "Warning" {
+		t.Errorf("Expected one Warning diagnostic, got %v", warnDiagnostics)
+	}
+}
+
 func Fatalf(t *testing.T, format string, args ...any) {
 	t.Fatalf(format, args...)
 }

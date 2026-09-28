@@ -38,7 +38,10 @@ func getGobin(env goEnvFunc) (string, error) {
 	if gopath == "" {
 		return "", fmt.Errorf("GOPATH is not set and GOBIN is empty: %w", ErrGobinResolution)
 	}
-	return filepath.Join(gopath, "bin"), nil
+	// A GOPATH may list several directories; binaries install to the first
+	// entry's bin directory, matching the go toolchain's own GOBIN default.
+	// SplitList uses the platform list separator (colon, semicolon on Windows).
+	return filepath.Join(filepath.SplitList(gopath)[0], "bin"), nil
 }
 
 // GetGobin resolves the directory containing Go-installed binaries. It prefers

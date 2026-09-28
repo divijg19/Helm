@@ -192,6 +192,24 @@ func TestCheckOutdated_PseudoVersion(t *testing.T) {
 	}
 }
 
+// TestCheckOutdated_IdenticalPseudoNotOutdated pins the reinstall-loop guard:
+// when the installed and latest versions are the same pseudo-version,
+// nothing has changed upstream and no update must be authorized.
+func TestCheckOutdated_IdenticalPseudoNotOutdated(t *testing.T) {
+	pseudo := "v1.2.3-0.20230601120000-abcdef123456"
+	runner := mockRunner{output: `{"Path":"example.com/foo","Version":"` + pseudo + `"}`}
+	tools := []Tool{
+		makeOutdatedTool("foo", "example.com/foo", pseudo),
+	}
+	results := CheckOutdated(context.Background(), tools, runner)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Outdated {
+		t.Errorf("expected identical pseudo-version to be up to date (no reinstall loop)")
+	}
+}
+
 // TestCheckOutdated_RetractedRange establishes the complete inclusive-range
 // contract for Helm's retracted-version handling, exercised through the
 // observable CheckOutdated behavior (not the private isRetracted helper).

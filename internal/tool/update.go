@@ -198,7 +198,7 @@ func installTool(ctx context.Context, t Tool, resolvedVersion, ref string, curre
 				Category: "Deprecation",
 				Message:  line,
 			})
-		} else if strings.Contains(lower, "warning") || strings.Contains(lower, "warn") {
+		} else if strings.Contains(lower, "warning") {
 			diagnostics = append(diagnostics, Diagnostic{
 				ToolName: t.Name(),
 				Category: "Warning",

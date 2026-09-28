@@ -85,8 +85,8 @@ sha256_of() {
 
 # --- download + verify -------------------------------------------------------
 
-TMPDIR="$(mktemp -d)"
-cd "$TMPDIR"
+TMPDIR="$(mktemp -d)" || die "cannot create temporary directory"
+cd "$TMPDIR" || die "cannot enter temporary directory"
 
 ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"

@@ -69,6 +69,9 @@ instance. The memoization is invocation-local, not a persistent cache.
 - There is one executable implementation in `cmd/helm`.
 - Discovery is sorted before reports are produced; the installation tree
   additionally groups by module and sorts modules and children by name.
+- Discovery scans a single GOBIN level: subdirectories are skipped, file
+  symlinks are followed, and a symlink to a directory lands in Invalid
+  rather than being traversed. Entry names cannot escape the directory.
 - `--check` and `--dry-run` share one planning path.
 - Tool-name filters apply to updates and plans; `--list` and `--outdated`
   take no tool names and `--info` takes exactly one. Unknown names are

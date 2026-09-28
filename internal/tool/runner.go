@@ -87,10 +87,20 @@ func (DefaultRunner) Run(ctx context.Context, c Command) (string, error) {
 	}
 
 	waitErr := cmd.Wait()
+	// The process exit status is authoritative for the outcome: when the
+	// install itself failed, its error is what callers act on, with any
+	// stream failure attached as context. A stream-only failure still
+	// fails the run, since partial output cannot attest a success.
+	if waitErr != nil {
+		if streamErr != nil {
+			return fullOutput.String(), fmt.Errorf("%w (stream: %v)", waitErr, streamErr)
+		}
+		return fullOutput.String(), waitErr
+	}
 	if streamErr != nil {
 		return fullOutput.String(), streamErr
 	}
-	return fullOutput.String(), waitErr
+	return fullOutput.String(), nil
 }
 
 // streamResult carries one scanned line or a terminal stream error.
@@ -105,7 +115,9 @@ type streamResult struct {
 const maxStreamLine = 4 * 1024 * 1024
 
 // drainStream forwards every line from one pipe to ch, then reports a stream
-// read failure if scanning did not end cleanly.
+// read failure if scanning did not end cleanly. After a scan error the
+// remainder is discarded up to EOF so a voluminous child can still terminate
+// instead of blocking forever on a pipe nobody drains.
 func drainStream(r io.Reader, stream string, ch chan<- streamResult) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), maxStreamLine)
@@ -113,6 +125,7 @@ func drainStream(r io.Reader, stream string, ch chan<- streamResult) {
 		ch <- streamResult{line: scanner.Text()}
 	}
 	if err := scanner.Err(); err != nil {
+		_, _ = io.Copy(io.Discard, r)
 		ch <- streamResult{err: fmt.Errorf("%s: %w", stream, err)}
 	}
 }
