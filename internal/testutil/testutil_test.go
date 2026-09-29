@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/divijg19/Helm/internal/testutil"
+	"github.com/divijg19/Helm/v2/internal/testutil"
 )
 
 func TestFixture(t *testing.T) {

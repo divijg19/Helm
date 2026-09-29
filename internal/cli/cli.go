@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/divijg19/Helm/internal/app"
-	"github.com/divijg19/Helm/internal/tool"
+	"github.com/divijg19/Helm/v2/internal/app"
+	"github.com/divijg19/Helm/v2/internal/tool"
 )
 
 var (

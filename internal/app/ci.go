@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/divijg19/Helm/internal/tool"
+	"github.com/divijg19/Helm/v2/internal/tool"
 )
 
 // CIRenderer produces deterministic, machine-oriented terminal output: no ANSI,

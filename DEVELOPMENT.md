@@ -96,7 +96,7 @@ first-party installer (`install.sh`) downloads and verifies those artifacts.
 Do not create a release by pushing to a branch.
 
 The reported binary version is injected at release time: GoReleaser passes the
-tag via `ldflags` into `github.com/divijg19/Helm/internal/cli.version` (see `.goreleaser.yml`).
+tag via `ldflags` into `github.com/divijg19/Helm/v2/internal/cli.version` (see `.goreleaser.yml`).
 The `version` default in source is a local-build fallback, not a release
 mechanism: a plain `go build` reports whatever the constant says. It is
 currently set to the in-development `v2.0.0`, so bump it only when that is
@@ -104,3 +104,32 @@ what a local build should claim — never as a substitute for the release
 `ldflags`, which is the only thing that makes a published build report its
 real tag. End-to-end tests pin their own version through `ldflags` the same
 way.
+
+### Major versions require a `/vN` module path suffix
+
+Go enforces semantic import versioning. If `go.mod` declares
+`module github.com/divijg19/Helm` and you tag `v2.0.0`, the module proxy
+rejects the tag outright:
+
+```
+invalid version: module contains a go.mod file, so module path must match
+major version ("github.com/divijg19/Helm/v2")
+```
+
+This is a hard rejection, not a skip. `go list -m -versions` simply stops at
+the last v1 tag, and `go install …@latest` silently resolves to that older
+version instead of the one you just released. The release looks published
+(goreleaser succeeds, assets download, the `curl` installer works) while the
+`go install` path serves stale code, which makes the failure easy to miss.
+
+The `/v2` is a suffix on the `module` line only. It does **not** mean creating
+a `v2/` directory or moving code into one: the repository layout, the GoReleaser
+`main:` path, and `go build -o helm ./cmd/helm` are all unaffected. Adopting it
+means updating the `module` line, every internal import, and every `-X` ldflag
+target (GoReleaser, plus the end-to-end test build) in lockstep.
+
+Verify before tagging a new major version:
+
+```bash
+go list -m -versions github.com/divijg19/Helm/v2
+```

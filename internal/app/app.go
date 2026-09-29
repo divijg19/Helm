@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/divijg19/Helm/internal/tool"
+	"github.com/divijg19/Helm/v2/internal/tool"
 )
 
 type App struct {

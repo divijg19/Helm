@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/divijg19/Helm/internal/tool"
+	"github.com/divijg19/Helm/v2/internal/tool"
 )
 
 // JSONRenderer emits machine-readable JSON. It is an output renderer, not an

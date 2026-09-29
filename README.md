@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/divijg19/Helm/main/install.sh | sh
 Or install directly with the Go toolchain (Go 1.26 or later):
 
 ```bash
-go install github.com/divijg19/Helm/cmd/helm@latest
+go install github.com/divijg19/Helm/v2/cmd/helm@latest
 ```
 
 The installer verifies the downloaded artifact against published SHA-256 checksums before installing `helm` to `~/.local/bin` (override with `INSTALL_DIR`).
@@ -44,6 +44,8 @@ The same executable is invoked as `helm`, `Helm`, or `update-go-tools`. The
 installer creates the `Helm` and `update-go-tools` aliases as symlinks to the
 canonical `helm` binary.
 
+Note that `go install` creates no aliases; only the canonical `helm` binary
+lands in your Go bin directory.
 
 ## Usage
 
@@ -67,31 +69,33 @@ immediately, before any toolchain access, and are unaffected by other
 *recognized* flags. An unrecognized flag is still a usage error, even
 alongside `--help`, because flag parsing runs first.
 
-#### Updating is outdated-first:
-Helm checks the selected tools for newer versions and installs only the ones 
-proven outdated, each at the exact version it just evaluated. Tools that are 
-already current are reported as up-to-date and left untouched; tools whose 
+### Updating is outdated-first
+
+Helm checks the selected tools for newer versions and installs only the ones
+proven outdated, each at the exact version it just evaluated. Tools that are
+already current are reported as up-to-date and left untouched; tools whose
 update state cannot be determined are never installed.
 
-#### Updates are transparent: 
-the terminal streams the toolchain's own output (`go: downloading`, `go: 
-extracting`, and anything else it prints) as each tool installs, 
-and that live output is the record — a successful install is not repeated 
-in a trailing notes block. `notes` names the tools that were successfully 
-updated and produced output rather than repeating the text: the CI 
-report lists the names (`--ci` gives `note: world`) and `--json` carries
-`"notes": ["world"]`, while the terminal repeats nothing and `--quiet` omits
-notes entirely. A failed install keeps its error and captured output beside it
-in the terminal only, so in `--json`/`--ci`/`--quiet` a failure is reported
-with its reason but not with that captured output. Nothing is hidden or
-reinterpreted; ordering is preserved within each output stream, and fetch
-chatter never feeds diagnostics.
+### Updates are transparent
 
-#### Tool names passed as filters must match installed tools:
-unknown names are rejected with exit code 2 and no report is produced. Filters 
-apply to updates and plans; `--list` and `--outdated` take no tool names and 
+The terminal streams the toolchain's own output (`go: downloading`, `go:
+extracting`, and anything else it prints) as each tool installs, and that live
+output is the record — a successful install is not repeated in a trailing notes
+block. `notes` names the tools that were successfully updated and produced
+output rather than repeating the text: the CI report lists the names (`--ci`
+gives `note: world`) and `--json` carries `"notes": ["world"]`, while the
+terminal repeats nothing and `--quiet` omits notes entirely. A failed install
+keeps its error and captured output beside it in the terminal only, so in
+`--json`/`--ci`/`--quiet` a failure is reported with its reason but not with
+that captured output. Nothing is hidden or reinterpreted; ordering is preserved
+within each output stream, and fetch chatter never feeds diagnostics.
+
+### Tool names passed as filters must match installed tools
+
+Unknown names are rejected with exit code 2 and no report is produced. Filters
+apply to updates and plans; `--list` and `--outdated` take no tool names and
 `--info` takes exactly one tool name. Operations that encounter failures exit
-non-zero (`1`): failed installs, failed outdated checks, and inventory issues; 
+non-zero (`1`): failed installs, failed outdated checks, and inventory issues;
 looking up an unknown tool with `--info` also exits `1` with a diagnostic on
 stderr and no report on stdout, exactly like filter rejection, while malformed
 invocations exit `2` and a GOBIN/GOPATH that cannot be resolved exits `3`. Any
@@ -102,8 +106,9 @@ reported by name in every mode, and by name *and* reason in `--json`
 (`failed_detail`), `--ci` (`failed-reason:`) and `--quiet` (stderr), so a
 script never has to guess why an install failed.
 
-#### Inventory counts reconcile: 
-every discovered tool is Healthy, Local, or Unhealthy, with invalid binaries 
+### Inventory counts reconcile
+
+Every discovered tool is Healthy, Local, or Unhealthy, with invalid binaries
 counted separately and never folded into `Unhealthy`, so the three tool buckets
 always sum to the number of *loaded* tools (the discovery header's `Executables`
 is larger, since it also counts the invalid binaries) and each problem is counted

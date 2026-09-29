@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/divijg19/Helm/internal/cli"
+	"github.com/divijg19/Helm/v2/internal/cli"
 )
 
 func main() {

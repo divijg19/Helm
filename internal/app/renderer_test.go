@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/divijg19/Helm/internal/tool"
+	"github.com/divijg19/Helm/v2/internal/tool"
 )
 
 func captureOutput(t *testing.T, fn func() error) (string, error) {

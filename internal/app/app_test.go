@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/divijg19/Helm/internal/testutil"
-	"github.com/divijg19/Helm/internal/tool"
+	"github.com/divijg19/Helm/v2/internal/testutil"
+	"github.com/divijg19/Helm/v2/internal/tool"
 )
 
 // TestNewAppPropagatesGobinResolutionError proves the first link of the
