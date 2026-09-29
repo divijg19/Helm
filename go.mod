@@ -1,4 +1,4 @@
-module github.com/divijg19/Helm
+module github.com/divijg19/Helm/v2
 
 go 1.26.0
 

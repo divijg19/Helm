@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/divijg19/Helm/internal/testutil"
+	"github.com/divijg19/Helm/v2/internal/testutil"
 )
 
 var (
@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 	}
 
 	binaryPath = filepath.Join(tmp, "helm")
-	build := exec.Command("go", "build", "-ldflags=-X=github.com/divijg19/Helm/internal/cli.version=v1.9.0-test -X=github.com/divijg19/Helm/internal/cli.commitHash=abc1234 -X=github.com/divijg19/Helm/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
+	build := exec.Command("go", "build", "-ldflags=-X=github.com/divijg19/Helm/v2/internal/cli.version=v1.9.0-test -X=github.com/divijg19/Helm/v2/internal/cli.commitHash=abc1234 -X=github.com/divijg19/Helm/v2/internal/cli.buildDate=2026-08-16", "-o", binaryPath, ".")
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/divijg19/Helm/internal/testutil"
+	"github.com/divijg19/Helm/v2/internal/testutil"
 )
 
 func TestLoad_RealGOBIN(t *testing.T) {

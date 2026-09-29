@@ -18,7 +18,7 @@
 
 set -eu
 
-REPO="divijg19/Helm"   # matches the module path; GitHub paths are case-insensitive
+REPO="divijg19/Helm"   # GitHub repo slug; the module path is this plus "/v2"
 BINARY="helm"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${VERSION:-}"
